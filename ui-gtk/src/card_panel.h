@@ -27,6 +27,7 @@ public:
 
     // Development aid (CARDINAL_SELFTEST=1): drives the same handlers a user would.
     void selfTest();
+    void selfTestDraft();  // leave an unsaved description and close the panel
 
 private:
     void update(const CardPanelState& s);
@@ -70,6 +71,12 @@ private:
     std::string shownTitle_;
     std::string shownDescription_;
     bool settingText_ = false;
+    bool editingDesc_ = false;               // the user changed the description box
+    std::string descBase_;                   // what it said when they started
+    std::string titleBase_;                  // same for the title
+    bool remoteChangedWhileEditing_ = false;
+    bool labelPickerBuilt_ = false;
+    bool memberPickerBuilt_ = false;
     std::vector<LabelChip> shownLabels_, shownBoardLabels_;
     std::vector<MemberChip> shownMembers_, shownBoardMembers_;
     std::vector<CommentRow> shownComments_;

@@ -29,8 +29,10 @@ CARDINAL_TRACE=1 build/ui-gtk/cardinal_gtk --api-base http://127.0.0.1:8099/1 \
 | Requisições HTTP no início a frio | 15 (1 boards, 2 do board, 12 listas) |
 | Início a quente (cache em disco, sem rede): `openBoard` → primeira coluna com cards | mediana 22 ms, p95 23 ms |
 | `openCard` → painel com título, descrição, etiquetas e comentários (do cache) | mediana 0,24 ms, máx 0,4 ms |
-| Requisições enviadas com a rede fora do ar | 0 |
 | Com rede: `openCard` → descrição, comentários e extras todos frescos | mediana ~10 ms (loopback) |
+
+No início a quente o benchmark aponta o app para um endereço onde nada escuta, de modo que só o
+cache pode responder; ele não conta requisições (o servidor de teste nem é o destino).
 
 Os tempos de rede acima são de loopback; com a internet somam-se os RTTs, mas a tela já está
 pronta com o cache antes de qualquer resposta. O card mostra o que está no cache em < 1 ms de
@@ -57,6 +59,9 @@ Histórico do que custou caro e o que resolveu (para não repetir):
 4. Antes da correção: ~950 ms até o board aparecer. Depois: ~370 ms.
 
 ## O que não foi medido
+* Uma lista fria de ~800 cards: as listas medidas têm 244. Pelo desenho (janela de 40 linhas no
+  `GtkListView`, +60 conforme o scroll) o custo na interface não depende do tamanho da lista, mas
+  isso não foi medido com 800.
 
 * Contra o Trello real (latência de rede, limites de requisição na prática). Sem credenciais, tudo
   foi medido contra `tools/mock_trello.py` e contra o servidor HTTP local dos testes.

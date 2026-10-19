@@ -14,7 +14,9 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
       dataDir_(std::move(dataDir)),
       onLogout_(std::move(onLogout)),
       openCardOnStart_(std::move(openCardOnStart)) {
-    root_ = adw_toolbar_view_new();
+    toolbar_ = adw_toolbar_view_new();
+    root_ = adw_toast_overlay_new();
+    adw_toast_overlay_set_child(ADW_TOAST_OVERLAY(root_), toolbar_);
 
     GtkWidget* header = adw_header_bar_new();
 
@@ -66,9 +68,9 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
     gtk_menu_button_set_popover(GTK_MENU_BUTTON(menuButton), menuPopover);
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menuButton);
 
-    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(root_), header);
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_), header);
     offlineBanner_ = adw_banner_new("Sem conexão com o Trello. Suas alterações serão enviadas quando a conexão voltar.");
-    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(root_), offlineBanner_);
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_), offlineBanner_);
 
     GtkWidget* loading = adw_status_page_new();
     GtkWidget* spinner = gtk_spinner_new();
@@ -84,7 +86,7 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
     adw_overlay_split_view_set_min_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 380);
     adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 440);
     adw_overlay_split_view_set_content(ADW_OVERLAY_SPLIT_VIEW(split_), content_);
-    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(root_), split_);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), split_);
 
     picker_ = model_.boardPicker();
     pickerConn_ = picker_->state().changed.connect([this](const BoardPickerState& s) { onPickerChanged(s); });
@@ -101,7 +103,26 @@ AppPage::~AppPage() {
     board_.reset();
 }
 
+namespace {
+const char* actionText(const std::string& kind) {
+    if (kind == "move") return "mover o card";
+    if (kind == "create") return "criar o card";
+    if (kind == "edit") return "salvar a edição";
+    if (kind == "label") return "adicionar a etiqueta";
+    if (kind == "member") return "adicionar o membro";
+    if (kind == "comment") return "enviar o comentário";
+    return "salvar a alteração";
+}
+}  // namespace
+
 void AppPage::onStatusChanged(const AppStatus& s) {
+    if (s.rejections > seenRejections_) {
+        seenRejections_ = s.rejections;
+        std::string text = std::string("O Trello não aceitou: ") + actionText(s.lastRejectionKind) + ". A alteração foi desfeita.";
+        AdwToast* toast = adw_toast_new(text.c_str());
+        adw_toast_set_timeout(toast, 6);
+        adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(root_), toast);
+    }
     adw_banner_set_revealed(ADW_BANNER(offlineBanner_), s.offline);
     gtk_widget_set_visible(syncIcon_, s.offline);
     if (s.pendingWrites > 0) {
@@ -171,6 +192,15 @@ void AppPage::openBoard(const std::string& boardId) {
     };
     headerConn_ = boardVm_->header().changed.connect(setTitle);
     setTitle(boardVm_->header().get());
+    if (const char* mode = g_getenv("CARDINAL_SELFTEST"); mode && std::string(mode) == "move") {
+        // Development aid: move card c2 to the top of the second list, as a drag would.
+        g_timeout_add(900, [](gpointer d) -> gboolean {
+            auto* self = static_cast<AppPage*>(d);
+            if (self->boardVm_ && self->boardVm_->columns().size() > 1)
+                self->boardVm_->moveCard("c2", self->boardVm_->columns()[1]->id, 0);
+            return G_SOURCE_REMOVE;
+        }, this);
+    }
     if (!openCardOnStart_.empty()) {
         openCard(openCardOnStart_);
         openCardOnStart_.clear();
@@ -185,7 +215,11 @@ void AppPage::openCard(const std::string& cardId) {
     adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), TRUE);
     if (g_getenv("CARDINAL_SELFTEST")) {
         g_timeout_add(700, [](gpointer d) -> gboolean {
-            static_cast<CardPanel*>(d)->selfTest();
+            const char* mode = g_getenv("CARDINAL_SELFTEST");
+            if (mode && std::string(mode) == "draft")
+                static_cast<CardPanel*>(d)->selfTestDraft();
+            else
+                static_cast<CardPanel*>(d)->selfTest();
             return G_SOURCE_REMOVE;
         }, panel_.get());
     }

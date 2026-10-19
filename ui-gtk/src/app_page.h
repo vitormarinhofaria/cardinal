@@ -44,7 +44,9 @@ private:
     std::string openCardOnStart_;
     std::vector<std::string> boardIds_;
 
-    GtkWidget* root_;
+    GtkWidget* root_;     // toast overlay around the toolbar view
+    GtkWidget* toolbar_;
+    int seenRejections_ = 0;
     GtkWidget* boardButton_;
     GtkWidget* boardList_;
     GtkWidget* boardPopover_;

@@ -694,6 +694,9 @@ TEST_F(SyncTest, LoadingAListMarksItLoadedEvenWhenItIsEmpty) {
             EXPECT_EQ(l.cardCount, 0);
         }
     EXPECT_TRUE(found);
-    for (const auto& l : engine->lists("b1"))
-        if (l.id == "l3") EXPECT_FALSE(l.loaded);  // cold lists stay unloaded
+    for (const auto& l : engine->lists("b1")) {
+        if (l.id == "l3") {
+            EXPECT_FALSE(l.loaded);  // cold lists stay unloaded
+        }
+    }
 }

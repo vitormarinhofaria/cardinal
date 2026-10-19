@@ -103,7 +103,10 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_widget_set_hexpand(title_, TRUE);
     addClass(title_, "panel-title");
     onNotify(title_, "notify::editing", [this] {
-        if (!gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_))) commitTitle();
+        if (gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)))
+            titleBase_ = shownTitle_;  // what the user was looking at when they began
+        else
+            commitTitle();
     });
     GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic");
     addClass(close, "flat");
@@ -115,7 +118,11 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
 
     banner_ = adw_banner_new("");
     adw_banner_set_button_label(ADW_BANNER(banner_), "Dispensar");
-    on(banner_, "button-clicked", [this] { vm_->dismissNotices(); });
+    on(banner_, "button-clicked", [this] {
+        remoteChangedWhileEditing_ = false;
+        vm_->dismissNotices();
+        updateNotice(vm_->state().get());
+    });
 
     // ---- content
     content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -248,7 +255,11 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     update(vm_->state().get());
 }
 
-CardPanel::~CardPanel() { vm_->state().changed.disconnect(conn_); }
+CardPanel::~CardPanel() {
+    vm_->state().changed.disconnect(conn_);
+    // Closing the panel must not throw away what was typed: an unsent draft is saved.
+    if (editingDesc_ && descriptionText() != shownDescription_) vm_->setDescription(descriptionText(), descBase_);
+}
 
 std::string CardPanel::descriptionText() const { return textOf(descBuffer_); }
 
@@ -264,22 +275,39 @@ void CardPanel::commitTitle() {
         gtk_editable_set_text(GTK_EDITABLE(title_), shownTitle_.c_str());
         return;
     }
-    vm_->setTitle(text);
+    vm_->setTitle(text, titleBase_.empty() ? shownTitle_ : titleBase_);
 }
 
 void CardPanel::descriptionEdited() {
     if (settingText_) return;
-    gtk_widget_set_visible(descButtons_, descriptionText() != shownDescription_);
+    const bool dirty = descriptionText() != shownDescription_;
+    if (dirty && !editingDesc_) {
+        editingDesc_ = true;
+        descBase_ = shownDescription_;  // the text the user saw when they started typing
+    }
+    if (!dirty) editingDesc_ = false;
+    gtk_widget_set_visible(descButtons_, dirty);
 }
 
 void CardPanel::saveDescription() {
-    vm_->setDescription(descriptionText());
+    vm_->setDescription(descriptionText(), descBase_);
+    editingDesc_ = false;
+    remoteChangedWhileEditing_ = false;
     gtk_widget_set_visible(descButtons_, FALSE);
+    updateNotice(vm_->state().get());
 }
 
 void CardPanel::revertDescription() {
     setDescriptionText(shownDescription_);
+    editingDesc_ = false;
+    remoteChangedWhileEditing_ = false;
     gtk_widget_set_visible(descButtons_, FALSE);
+    updateNotice(vm_->state().get());
+}
+
+void CardPanel::selfTestDraft() {
+    gtk_text_buffer_set_text(descBuffer_, "Rascunho que ninguém salvou explicitamente ✍️", -1);
+    onClose_();  // the panel is destroyed right after: the draft must survive
 }
 
 void CardPanel::selfTest() {
@@ -338,6 +366,7 @@ void CardPanel::update(const CardPanelState& s) {
             gtk_widget_set_visible(descButtons_, FALSE);
         } else {
             gtk_widget_set_visible(descButtons_, descriptionText() != shownDescription_);
+            remoteChangedWhileEditing_ = true;  // saving now would overwrite their change
         }
     }
 
@@ -348,7 +377,14 @@ void CardPanel::update(const CardPanelState& s) {
 }
 
 void CardPanel::updateNotice(const CardPanelState& s) {
-    if (s.notices == shownNotices_) return;
+    if (remoteChangedWhileEditing_) {
+        adw_banner_set_title(ADW_BANNER(banner_),
+                             "A descrição foi alterada por outra pessoa enquanto você editava. Salvar vai sobrescrevê-la.");
+        adw_banner_set_revealed(ADW_BANNER(banner_), TRUE);
+        shownNotices_.clear();
+        return;
+    }
+    if (s.notices == shownNotices_ && !s.notices.empty()) return;
     shownNotices_ = s.notices;
     if (s.notices.empty()) {
         adw_banner_set_revealed(ADW_BANNER(banner_), FALSE);
@@ -373,12 +409,15 @@ void CardPanel::updateNotice(const CardPanelState& s) {
 }
 
 void CardPanel::updateLabels(const CardPanelState& s) {
-    if (s.labels != shownLabels_) {
+    const bool appliedChanged = s.labels != shownLabels_;
+    if (appliedChanged) {
         shownLabels_ = s.labels;
         while (GtkWidget* c = gtk_widget_get_first_child(labelsBox_)) gtk_flow_box_remove(GTK_FLOW_BOX(labelsBox_), c);
         for (const auto& l : s.labels) gtk_flow_box_append(GTK_FLOW_BOX(labelsBox_), chip(l));
     }
-    if (s.boardLabels != shownBoardLabels_ || s.labels != shownLabels_ || labelRowIds_.empty()) {
+    // the picker offers only labels not yet on the card, so it follows both lists
+    if (appliedChanged || s.boardLabels != shownBoardLabels_ || !labelPickerBuilt_) {
+        labelPickerBuilt_ = true;
         shownBoardLabels_ = s.boardLabels;
         clearListBox(addLabelList_);
         labelRowIds_.clear();
@@ -397,12 +436,14 @@ void CardPanel::updateLabels(const CardPanelState& s) {
 }
 
 void CardPanel::updateMembers(const CardPanelState& s) {
-    if (s.members != shownMembers_) {
+    const bool appliedChanged = s.members != shownMembers_;
+    if (appliedChanged) {
         shownMembers_ = s.members;
         clearChildren(membersBox_);
         for (const auto& m : s.members) gtk_box_append(GTK_BOX(membersBox_), avatar(m.fullName, 30));
     }
-    if (s.boardMembers != shownBoardMembers_ || memberRowIds_.empty()) {
+    if (appliedChanged || s.boardMembers != shownBoardMembers_ || !memberPickerBuilt_) {
+        memberPickerBuilt_ = true;
         shownBoardMembers_ = s.boardMembers;
         clearListBox(addMemberList_);
         memberRowIds_.clear();
@@ -477,7 +518,11 @@ void CardPanel::updateExtras(const CardPanelState& s) {
         clearChildren(attachmentsBox_);
         if (!s.attachments.empty()) gtk_box_append(GTK_BOX(attachmentsBox_), section("Anexos"));
         for (const auto& a : s.attachments) {
-            GtkWidget* link = gtk_link_button_new_with_label(a.url.c_str(), a.name.empty() ? a.url.c_str() : a.name.c_str());
+            const std::string text = a.name.empty() ? a.url : a.name;
+            // Teammates can attach anything: only web links are clickable (never file: or custom schemes).
+            const bool web = a.url.rfind("https://", 0) == 0 || a.url.rfind("http://", 0) == 0;
+            GtkWidget* link = web ? gtk_link_button_new_with_label(a.url.c_str(), text.c_str())
+                                  : label(text);
             gtk_widget_set_halign(link, GTK_ALIGN_START);
             gtk_box_append(GTK_BOX(attachmentsBox_), link);
         }

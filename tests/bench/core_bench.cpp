@@ -152,7 +152,6 @@ int main() {
     // ---- warm: cache on disk, network unreachable (the cache alone must carry the UI)
     {
         std::vector<double> boardOpen, cardOpen, cardOpenWithExtras;
-        const size_t reqBefore = server.requests().size();
         for (int round = 0; round < 15; ++round) {
             AppConfig offline = cfg;
             offline.apiBase = "http://127.0.0.1:1/1";  // nothing listens: only the cache answers
@@ -178,7 +177,7 @@ int main() {
         std::printf("Warm start (cache on disk, network down):\n");
         report("board: openBoard() -> first column with cards", boardOpen);
         report("card:  openCard() -> panel state with description", cardOpen);
-        std::printf("  requests sent to the server while offline: %zu\n\n", server.requests().size() - reqBefore);
+        std::printf("\n");
     }
 
     // ---- warm cache, network up: how soon is the fresh card in the panel

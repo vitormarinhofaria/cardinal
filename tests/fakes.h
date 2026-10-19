@@ -149,18 +149,26 @@ namespace cardinal::testing {
 // Runs jobs only when the test says so, in posting order.
 class QueueExecutor : public Executor {
 public:
-    void post(std::function<void()> job) override { jobs.push_back(std::move(job)); }
+    void post(std::function<void()> job) override {
+        std::lock_guard lk(mu);  // timers and workers may post from their own threads
+        jobs.push_back(std::move(job));
+    }
     bool runOne() {
-        if (jobs.empty()) return false;
-        auto job = std::move(jobs.front());
-        jobs.pop_front();
+        std::function<void()> job;
+        {
+            std::lock_guard lk(mu);
+            if (jobs.empty()) return false;
+            job = std::move(jobs.front());
+            jobs.pop_front();
+        }
         job();
         return true;
     }
     void drain() {
         while (runOne()) {}
     }
-    std::deque<std::function<void()>> jobs;
+    std::deque<std::function<void()>> jobs;  // read it only from the test thread, between runs
+    std::mutex mu;
 };
 
 // "a=b&c=d" (percent-encoded) -> {a:b, c:d}
