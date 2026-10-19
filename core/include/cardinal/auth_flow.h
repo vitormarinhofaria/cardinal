@@ -34,6 +34,10 @@ struct AuthOptions {
     unsigned short port = 0;  // 0 = any free port; pin one if the API key whitelists origins
 };
 
+// The Trello page where a signed-in user authorizes `apiKey` and is shown a token to copy. Used when
+// the automatic flow is not available (key not whitelisted for the loopback address).
+std::string manualAuthorizeUrl(const std::string& apiKey, const std::string& appName = "Cardinal");
+
 // Trello's browser authorization without a backend: the user approves in the browser, Trello
 // redirects to a page served on 127.0.0.1 with the token in the URL fragment, a tiny script on
 // that page posts it back to this process. One attempt; the server closes when done.

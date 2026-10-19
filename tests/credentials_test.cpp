@@ -93,3 +93,23 @@ TEST(LibsecretStore, RoundTripsAndClears) {
     EXPECT_FALSE(store->load().has_value());
     store->clear();  // clearing twice is harmless
 }
+
+TEST(CredentialEncoding, TokenOnlyStaysPlainForBackwardCompatibility) {
+    EXPECT_EQ(encodeCredentials({"tok123", ""}), "tok123");
+    auto back = decodeCredentials("tok123");
+    EXPECT_EQ(back.token, "tok123");
+    EXPECT_EQ(back.apiKey, "");
+}
+
+TEST(CredentialEncoding, KeyAndTokenRoundTrip) {
+    Credentials c{"tok-é-☕", "abcdef0123456789abcdef0123456789"};
+    auto back = decodeCredentials(encodeCredentials(c));
+    EXPECT_EQ(back.token, c.token);
+    EXPECT_EQ(back.apiKey, c.apiKey);
+}
+
+TEST(CredentialEncoding, GarbageFallsBackToATokenOnlyInsteadOfThrowing) {
+    auto back = decodeCredentials("v1\nsó-uma-linha");
+    EXPECT_EQ(back.apiKey, "");
+    EXPECT_FALSE(back.token.empty());
+}

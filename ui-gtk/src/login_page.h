@@ -18,7 +18,9 @@ private:
     GtkWidget* signIn_;
     GtkWidget* waiting_;
     GtkWidget* error_;
+    GtkWidget* keyEntry_;
     GtkWidget* tokenEntry_;
+    GtkWidget* manual_;
 };
 
 }  // namespace cardinal::gtk

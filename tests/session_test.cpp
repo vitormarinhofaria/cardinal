@@ -109,7 +109,8 @@ void deliverTokenLikeTheBrowser(const std::string& authorizeUrl, const std::stri
 std::atomic<int> gBoardsDelayMs{0};
 
 HttpReply fakeTrello(const HttpRequestInfo& r) {
-    if (r.query.find("key=KEY") == std::string::npos) return {401, "invalid key"};
+    if (r.query.find("key=KEY") == std::string::npos && r.query.find("key=OTHERKEY1234567890ab") == std::string::npos)
+        return {401, "invalid key"};
     if (r.query.find("token=GOODTOKEN0123456789") == std::string::npos) return {401, "invalid token"};
     if (r.path == "/1/members/me/boards") {
         if (gBoardsDelayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(gBoardsDelayMs.load()));
@@ -347,4 +348,72 @@ TEST_F(SessionTest, DestroyingTheSessionAbortsRequestsInFlightInsteadOfWaiting) 
     session.reset();
     EXPECT_LT(std::chrono::steady_clock::now() - start, 1500ms);
     gBoardsDelayMs = 0;
+}
+
+TEST_F(SessionTest, LoginWithOwnKeyAndTokenUsesThatKeyForEveryRequestAndSavesBoth) {
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    session->loginWithToken(kGoodToken, "OTHERKEY1234567890ab");
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::Ready; }));
+    session->model()->start();
+    ASSERT_TRUE(settle([&] { return server->count("GET", "/1/members/me/boards") == 1; }));
+    EXPECT_NE(server->requests()[0].query.find("key=OTHERKEY1234567890ab"), std::string::npos);
+    ASSERT_TRUE(settle([&] { return creds.load().has_value(); }));
+    EXPECT_EQ(creds.load()->token, kGoodToken);
+    EXPECT_EQ(creds.load()->apiKey, "OTHERKEY1234567890ab");
+}
+
+TEST_F(SessionTest, RestoredSessionUsesTheKeyThatWasSavedWithTheToken) {
+    creds.value = Credentials{kGoodToken, "OTHERKEY1234567890ab"};
+    make();
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::Ready; }));
+    session->model()->start();
+    ASSERT_TRUE(settle([&] { return server->count("GET", "/1/members/me/boards") == 1; }));
+    EXPECT_NE(server->requests()[0].query.find("key=OTHERKEY1234567890ab"), std::string::npos);
+}
+
+TEST_F(SessionTest, MalformedApiKeysAreRefused) {
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    for (const char* bad : {"short", "has spaces in the key 12345", "<script>alert(1)</script>"}) {
+        session->loginWithToken(kGoodToken, bad);
+        EXPECT_EQ(phase(), SessionState::Phase::SignedOut) << bad;
+        EXPECT_EQ(session->state().get().error, SessionError::InvalidApiKey) << bad;
+    }
+    EXPECT_FALSE(creds.load().has_value());
+}
+
+TEST_F(SessionTest, OpenTokenPageOpensTheAuthorizeUrlWithTheTypedKey) {
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    session->openTokenPage("  OTHERKEY1234567890ab \n");
+    EXPECT_EQ(browser.url.rfind("https://trello.com/1/authorize?", 0), 0u);
+    EXPECT_NE(browser.url.find("key=OTHERKEY1234567890ab"), std::string::npos);
+    EXPECT_EQ(browser.url.find("return_url"), std::string::npos);
+    EXPECT_EQ(phase(), SessionState::Phase::SignedOut);
+    EXPECT_EQ(session->state().get().error, SessionError::None);
+}
+
+TEST_F(SessionTest, OpenTokenPageFallsBackToTheBuildKeyWhenNoneIsTyped) {
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    session->openTokenPage("");
+    EXPECT_NE(browser.url.find("key=KEY"), std::string::npos);
+}
+
+TEST_F(SessionTest, OpenTokenPageWithNoKeyAnywhereExplainsWhatIsMissing) {
+    cfg.apiKey = "";
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    session->openTokenPage("");
+    EXPECT_TRUE(browser.url.empty());
+    EXPECT_EQ(session->state().get().error, SessionError::MissingApiKey);
+}
+
+TEST_F(SessionTest, OpenTokenPageReportsABrowserThatCannotOpen) {
+    browser.fail = true;
+    make();
+    settle([&] { return phase() == SessionState::Phase::SignedOut; });
+    session->openTokenPage("OTHERKEY1234567890ab");
+    EXPECT_EQ(session->state().get().error, SessionError::BrowserFailed);
 }

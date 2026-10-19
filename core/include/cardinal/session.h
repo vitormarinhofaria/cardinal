@@ -20,6 +20,7 @@ enum class SessionError {
     BrowserFailed,   // could not open the browser
     LoginTimedOut,
     InvalidToken,    // pasted token is empty or malformed
+    InvalidApiKey,   // pasted API key is malformed
     SessionExpired,  // Trello rejected the saved token
 };
 
@@ -46,11 +47,15 @@ public:
 
     void startLogin();                          // browser authorization
     void cancelLogin();
-    void loginWithToken(const std::string& token);  // pasted by hand
+    // Pasted by hand. `apiKey` (optional) is the user's own Trello key; the token only works with
+    // the key that issued it, so it is kept with the token and used for every request.
+    void loginWithToken(const std::string& token, const std::string& apiKey = "");
+    // Opens Trello's token page for `apiKey` (or the build's key when empty).
+    void openTokenPage(const std::string& apiKey = "");
     void logout();
 
 private:
-    void becomeReady(const std::string& token);
+    void becomeReady(const std::string& token, const std::string& apiKey);
     void signOut(SessionError why, bool clearCredentials);
     void background(std::function<void()> work);
 

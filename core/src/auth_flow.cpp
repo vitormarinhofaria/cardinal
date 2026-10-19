@@ -160,6 +160,11 @@ void finish(const std::shared_ptr<std::promise<std::string>>& p, std::exception_
 
 }  // namespace
 
+std::string manualAuthorizeUrl(const std::string& apiKey, const std::string& appName) {
+    return "https://trello.com/1/authorize?key=" + urlEncode(apiKey) + "&name=" + urlEncode(appName) +
+           "&expiration=never&response_type=token&scope=" + urlEncode("read,write");
+}
+
 AuthFlow::AuthFlow(std::string apiKey, BrowserOpener& opener, AuthOptions options)
     : apiKey_(std::move(apiKey)), opener_(opener), options_(std::move(options)) {}
 

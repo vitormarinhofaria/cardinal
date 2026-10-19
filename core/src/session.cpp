@@ -12,6 +12,12 @@ std::string trim(const std::string& s) {
     return std::string(b, e);
 }
 
+// Trello API keys are 32 hex characters; accept any plain alphanumeric string of a sane length.
+bool looksLikeApiKey(const std::string& k) {
+    if (k.size() < 16 || k.size() > 64) return false;
+    return std::all_of(k.begin(), k.end(), [](unsigned char c) { return std::isalnum(c) != 0; });
+}
+
 bool looksLikeToken(const std::string& t) {
     if (t.size() < 16 || t.size() > 512) return false;
     return std::all_of(t.begin(), t.end(),
@@ -36,8 +42,8 @@ Session::Session(AppConfig base, CredentialStore& credentials, BrowserOpener& br
         }
         ui_.post([this, alive, saved = std::move(saved)] {
             if (!*alive) return;
-            if (saved && looksLikeToken(saved->token))
-                becomeReady(saved->token);
+            if (saved && looksLikeToken(saved->token) && (saved->apiKey.empty() || looksLikeApiKey(saved->apiKey)))
+                becomeReady(saved->token, saved->apiKey);
             else
                 state_.set({SessionState::Phase::SignedOut, SessionError::None});
         });
@@ -96,11 +102,11 @@ void Session::startLogin() {
             }
             background([this, token] {
                 try {
-                    credentials_.save({token});
+                    credentials_.save({token, ""});
                 } catch (const std::exception&) {  // no keyring: the session still works until exit
                 }
             });
-            becomeReady(token);
+            becomeReady(token, "");
         });
     });
 }
@@ -111,29 +117,55 @@ void Session::cancelLogin() {
     state_.set({SessionState::Phase::SignedOut, SessionError::None});
 }
 
-void Session::loginWithToken(const std::string& raw) {
+void Session::openTokenPage(const std::string& typedKey) {
+    std::string key = trim(typedKey);
+    const bool typed = !key.empty();
+    if (!typed) key = base_.apiKey;  // the build's own key is trusted as is
+    if (key.empty()) {
+        state_.set({state_.get().phase, SessionError::MissingApiKey});
+        return;
+    }
+    if (typed && !looksLikeApiKey(key)) {
+        state_.set({state_.get().phase, SessionError::InvalidApiKey});
+        return;
+    }
+    try {
+        browser_.open(manualAuthorizeUrl(key));
+        if (state_.get().error != SessionError::None) state_.set({state_.get().phase, SessionError::None});
+    } catch (const std::exception&) {
+        state_.set({state_.get().phase, SessionError::BrowserFailed});
+    }
+}
+
+void Session::loginWithToken(const std::string& raw, const std::string& rawKey) {
     const std::string token = trim(raw);
+    const std::string apiKey = trim(rawKey);
     if (state_.get().phase == SessionState::Phase::WaitingForBrowser) {
         flow_.reset();
+    }
+    if (!apiKey.empty() && !looksLikeApiKey(apiKey)) {
+        state_.set({SessionState::Phase::SignedOut, SessionError::InvalidApiKey});
+        return;
     }
     if (!looksLikeToken(token)) {
         state_.set({SessionState::Phase::SignedOut, SessionError::InvalidToken});
         return;
     }
-    background([this, token] {
+    background([this, token, apiKey] {
         try {
-            credentials_.save({token});
+            credentials_.save({token, apiKey});
         } catch (const std::exception&) {
         }
     });
-    becomeReady(token);
+    becomeReady(token, apiKey);
 }
 
 void Session::logout() { signOut(SessionError::None, true); }
 
-void Session::becomeReady(const std::string& token) {
+void Session::becomeReady(const std::string& token, const std::string& apiKey) {
     AppConfig cfg = base_;
     cfg.token = token;
+    if (!apiKey.empty()) cfg.apiKey = apiKey;  // the token was issued for this key
     context_ = std::make_unique<AppContext>(std::move(cfg), ui_);
     statusConnection_ = context_->model().status().changed.connect([this](const AppStatus& s) {
         if (s.loginRequired) signOut(SessionError::SessionExpired, true);
