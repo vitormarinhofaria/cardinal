@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "MainWindow.g.h"
+#include "app_page.h"
 #include "login_page.h"
 #include "shell.h"
 
@@ -25,7 +26,7 @@ private:
     int connection_ = 0;
     Microsoft::UI::Xaml::UIElement starting_{nullptr};
     std::unique_ptr<cardinal::win::LoginPage> login_;
-    Microsoft::UI::Xaml::UIElement app_{nullptr};  // signed-in placeholder until AppPage lands
+    std::unique_ptr<cardinal::win::AppPage> app_;
 };
 
 }  // namespace winrt::Cardinal::implementation

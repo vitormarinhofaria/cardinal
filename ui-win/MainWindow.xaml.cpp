@@ -40,7 +40,7 @@ void MainWindow::detach() {
     if (!shell_) return;
     shell_->session->state().changed.disconnect(connection_);
     host().Children().Clear();
-    app_ = nullptr;
+    app_.reset();
     login_.reset();
     shell_ = nullptr;
 }
@@ -56,7 +56,7 @@ void MainWindow::onSessionChanged(const SessionState& state) {
     if (state.phase != Phase::Ready && app_) {
         // Drop every view-model right away; the session destroys the backend on its next turn.
         showPage(login_->widget());
-        app_ = nullptr;
+        app_.reset();
     }
     switch (state.phase) {
         case Phase::Starting:
@@ -69,16 +69,9 @@ void MainWindow::onSessionChanged(const SessionState& state) {
             break;
         case Phase::Ready:
             if (!app_ && session.model()) {
-                auto page = vstack(12);
-                page.HorizontalAlignment(HorizontalAlignment::Center);
-                page.VerticalAlignment(VerticalAlignment::Center);
-                page.Children().Append(text("Conectado ao Trello.", 20));
-                auto logout = button("Sair");
-                logout.HorizontalAlignment(HorizontalAlignment::Center);
-                logout.Click([this](auto&&, auto&&) { shell_->session->logout(); });
-                page.Children().Append(logout);
-                app_ = page;
-                showPage(app_);
+                app_ = std::make_unique<AppPage>(*session.model(), shell_->dataDir,
+                                                 [this] { shell_->session->logout(); }, shell_->options.openCard);
+                showPage(app_->widget());
             }
             break;
     }

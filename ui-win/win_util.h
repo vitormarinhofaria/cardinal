@@ -53,6 +53,20 @@ inline uc::StackPanel hstack(double spacing = 0) {
     return p;
 }
 
+// What a screen reader announces for an element whose content is an icon or a composite.
+inline void accessibleName(ux::DependencyObject const& e, std::string_view name) {
+    ux::Automation::AutomationProperties::SetName(e, hs(name));
+}
+
+// A ListView of ListViewItems built in code hands ItemClick the item's *content*, so pickers put
+// the id in the content's Tag. Empty when there is none.
+inline std::string clickedId(winrt::Windows::Foundation::IInspectable const& clicked) {
+    auto element = clicked.try_as<ux::FrameworkElement>();
+    if (!element) return {};
+    auto tag = element.Tag().try_as<winrt::hstring>();
+    return tag ? winrt::to_string(*tag) : std::string();
+}
+
 inline void show(ux::UIElement const& e, bool visible) {
     e.Visibility(visible ? ux::Visibility::Visible : ux::Visibility::Collapsed);
 }

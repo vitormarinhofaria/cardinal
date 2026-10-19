@@ -100,9 +100,13 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
+    <ClInclude Include="app_page.h" />
+    <ClInclude Include="board_view.h" />
+    <ClInclude Include="card_panel.h" />
     <ClInclude Include="login_page.h" />
     <ClInclude Include="platform.h" />
     <ClInclude Include="shell.h" />
+    <ClInclude Include="style.h" />
     <ClInclude Include="win_util.h" />
     <ClInclude Include="App.xaml.h">
       <DependentUpon>App.xaml</DependentUpon>
@@ -125,6 +129,9 @@
     <ClCompile Include="MainWindow.xaml.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="app_page.cpp" />
+    <ClCompile Include="board_view.cpp" />
+    <ClCompile Include="card_panel.cpp" />
     <ClCompile Include="login_page.cpp" />
     <ClCompile Include="platform.cpp" />
     <ClCompile Include="shell.cpp" />
