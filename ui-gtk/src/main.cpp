@@ -25,6 +25,7 @@ struct Options {
     int pollSeconds = 20;
     std::string snapshot;  // render the window to this PNG after snapshotDelayMs, then quit
     int snapshotDelayMs = 2500;
+    bool noKeyring = false;  // keep credentials in memory only (development)
     std::string openCard;  // open this card as soon as the board shows (development)
 };
 
@@ -94,7 +95,7 @@ void activate(GApplication* gapp, gpointer data) {
     if (!o.apiBase.empty()) cfg.apiBase = o.apiBase;
     cfg.pollInterval = std::chrono::seconds(o.pollSeconds);
 
-    if (!o.token.empty())
+    if (!o.token.empty() || o.noKeyring)
         app->credentials = std::make_unique<MemoryCredentials>(o.token);
     else
         app->credentials = makeLibsecretCredentialStore();
@@ -132,6 +133,7 @@ int main(int argc, char** argv) {
     static gchar* snapshot = nullptr;
     static gint snapshotDelay = 2500;
     static gchar* openCard = nullptr;
+    static gboolean noKeyring = FALSE;
     GOptionEntry entries[] = {
         {"api-base", 0, 0, G_OPTION_ARG_STRING, &apiBase, "Trello API base URL (development)", "URL"},
         {"api-key", 0, 0, G_OPTION_ARG_STRING, &apiKey, "Trello API key", "KEY"},
@@ -140,6 +142,7 @@ int main(int argc, char** argv) {
         {"poll-seconds", 0, 0, G_OPTION_ARG_INT, &poll, "Seconds between live-update polls", "N"},
         {"snapshot", 0, 0, G_OPTION_ARG_FILENAME, &snapshot, "Render the window to this PNG and quit (development)", "FILE"},
         {"snapshot-delay", 0, 0, G_OPTION_ARG_INT, &snapshotDelay, "Milliseconds to wait before the snapshot", "MS"},
+        {"no-keyring", 0, 0, G_OPTION_ARG_NONE, &noKeyring, "Do not read or write the system keyring (development)", nullptr},
         {"open-card", 0, 0, G_OPTION_ARG_STRING, &openCard, "Open this card id once the board shows (development)", "ID"},
         {nullptr, 0, 0, G_OPTION_ARG_NONE, nullptr, nullptr, nullptr},
     };
@@ -154,6 +157,7 @@ int main(int argc, char** argv) {
                          a->options.snapshot = snapshot ? snapshot : "";
                          a->options.snapshotDelayMs = snapshotDelay;
                          a->options.openCard = openCard ? openCard : "";
+                         a->options.noKeyring = noKeyring;
                          a->dataDir = dataDir ? dataDir
                                               : (std::filesystem::path(g_get_user_data_dir()) / "cardinal").string();
                          return -1;

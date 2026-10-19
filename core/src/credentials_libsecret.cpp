@@ -35,7 +35,7 @@ public:
                                                     account_.c_str(), nullptr);
         check(error, "keyring lookup");
         if (!secret) return std::nullopt;
-        Credentials c{secret};
+        Credentials c = decodeCredentials(secret);
         secret_password_free(secret);
         return c;
     }
@@ -43,7 +43,7 @@ public:
     void save(const Credentials& c) override {
         GError* error = nullptr;
         secret_password_store_sync(schema(), SECRET_COLLECTION_DEFAULT, "Cardinal (Trello token)",
-                                   c.token.c_str(), nullptr, &error, "account", account_.c_str(),
+                                   encodeCredentials(c).c_str(), nullptr, &error, "account", account_.c_str(),
                                    nullptr);
         check(error, "keyring store");
     }

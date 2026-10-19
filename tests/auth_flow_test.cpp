@@ -304,3 +304,21 @@ TEST(AuthFlow, RunningTwiceIsRefused) {
     auto token = flow.run();
     EXPECT_THROW(flow.run(), std::logic_error);
 }
+
+TEST(ManualAuthorizeUrl, AsksTrelloToShowTheTokenOnItsOwnPage) {
+    auto url = manualAuthorizeUrl("abc123KEY");
+    EXPECT_EQ(url.rfind("https://trello.com/1/authorize?", 0), 0u);
+    auto q = queryOf(url);
+    EXPECT_EQ(q["key"], "abc123KEY");
+    EXPECT_EQ(q["response_type"], "token");
+    EXPECT_EQ(q["scope"], "read,write");
+    EXPECT_EQ(q["expiration"], "never");
+    EXPECT_EQ(q["name"], "Cardinal");
+    EXPECT_EQ(q.count("return_url"), 0u);      // no redirect: the token is shown to the user
+    EXPECT_EQ(q.count("callback_method"), 0u);
+}
+
+TEST(ManualAuthorizeUrl, EncodesTheKey) {
+    auto url = manualAuthorizeUrl("a&b=c");
+    EXPECT_EQ(queryOf(url)["key"], "a&b=c");
+}

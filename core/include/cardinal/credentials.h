@@ -11,8 +11,13 @@
 namespace cardinal {
 
 struct Credentials {
-    std::string token;  // the user's Trello token; the API key is a build constant
+    std::string token;   // the user's Trello token
+    std::string apiKey = "";  // the key that token was issued for; empty = the app's built-in key
 };
+
+// How a store keeps both in one secret. A token alone is stored as is (older entries keep working).
+std::string encodeCredentials(const Credentials& c);
+Credentials decodeCredentials(const std::string& secret);
 
 // Secret storage. Implementations: libsecret (Linux); Keychain / Credential Manager elsewhere.
 class CredentialStore {
