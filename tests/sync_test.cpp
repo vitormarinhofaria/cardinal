@@ -587,3 +587,11 @@ TEST_F(SyncTest, DeliveryAfterEngineDestroyedIsHarmless) {
     EXPECT_NO_THROW(handler({action("createCard", "c7", "l1")}));
     EXPECT_EQ(req.calls.size(), calls);
 }
+
+TEST_F(SyncTest, OpenBoardCachesTheBoardItselfEvenIfTheBoardListWasNeverLoaded) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    ASSERT_EQ(engine->boards().size(), 1u);
+    EXPECT_EQ(engine->boards()[0].name, "Produto");
+}

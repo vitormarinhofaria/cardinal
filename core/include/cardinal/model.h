@@ -10,6 +10,7 @@ struct Board {
     std::string id;
     std::string name;
     bool closed = false;
+    bool operator==(const Board&) const = default;
 };
 
 struct List {
@@ -75,18 +76,21 @@ struct CheckItem {
     std::string id;
     std::string name;
     bool done = false;
+    bool operator==(const CheckItem&) const = default;
 };
 
 struct Checklist {
     std::string id;
     std::string name;
     std::vector<CheckItem> items;
+    bool operator==(const Checklist&) const = default;
 };
 
 struct Attachment {
     std::string id;
     std::string name;
     std::string url;
+    bool operator==(const Attachment&) const = default;
 };
 
 struct CardExtras {

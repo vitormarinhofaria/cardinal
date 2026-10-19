@@ -69,6 +69,8 @@ class WriteSink : public ChangeSink {
 public:
     virtual void onRejected(const Rejection& rejection) = 0;
     virtual void onConflict(const Conflict& conflict) = 0;
+    // The number of unconfirmed writes changed (one more, or one fewer). See pendingCount().
+    virtual void onPendingChanged() {}
 };
 
 struct WriteOptions {

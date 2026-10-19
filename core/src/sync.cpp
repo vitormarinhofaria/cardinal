@@ -97,6 +97,7 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         auto snap = api.board(boardId, Priority::Visible).get();
         std::vector<std::string> listIds;
         for (const auto& l : snap.lists) listIds.push_back(l.id);
+        store.upsertBoards(std::vector<Board>{snap.board});
         store.upsertLists(snap.lists);
         store.pruneBoardLists(boardId, listIds);
         store.replaceLabels(boardId, snap.labels);

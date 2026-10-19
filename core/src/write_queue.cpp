@@ -265,6 +265,7 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
             pending.push_back({id, b.kind, b.cardId, b.payload.dump(), opts.now()});
         }
         sink.onChanged(change);
+        sink.onPendingChanged();
         retry();
         return {id, b.cardId};
     }
@@ -313,8 +314,11 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
             }
             if (failure) reject(op, *failure);
             store.removePendingOp(op.id);
-            std::lock_guard lk(mutex);
-            pending.pop_front();
+            {
+                std::lock_guard lk(mutex);
+                pending.pop_front();
+            }
+            sink.onPendingChanged();
         }
     }
 

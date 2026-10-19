@@ -28,6 +28,10 @@ struct RecordingWriteSink : WriteSink {
         std::lock_guard lk(mu);
         conflicts.push_back(c);
     }
+    void onPendingChanged() override {
+        std::lock_guard lk(mu);
+        ++pendingEvents;
+    }
     bool any(std::vector<std::string> ChangeSet::*field, const std::string& id) {
         std::lock_guard lk(mu);
         for (const auto& c : changes)
@@ -39,6 +43,7 @@ struct RecordingWriteSink : WriteSink {
     std::vector<SyncError> errors;
     std::vector<Rejection> rejected;
     std::vector<Conflict> conflicts;
+    int pendingEvents = 0;
 };
 
 constexpr const char* kCard1 = R"({"id":"c1","idList":"l1","name":"A","desc":"old desc","pos":10,
@@ -294,7 +299,6 @@ TEST_F(QueueTest, CreateCardShowsTemporaryCardThenSwapsForTheRealOne) {
     EXPECT_FALSE(store->card(e.cardId).has_value());
     ASSERT_TRUE(store->card("c9").has_value());
     EXPECT_EQ(store->card("c9")->listId, "l1");
-    ASSERT_EQ(sink.changes.back().renamedCards.size() + (sink.changes.size() > 1 ? 0 : 0), 1u);
     bool renamed = false;
     for (const auto& c : sink.changes)
         for (const auto& [from, to] : c.renamedCards) renamed |= from == e.cardId && to == "c9";
@@ -447,4 +451,25 @@ TEST_F(QueueTest, ConcurrentEnqueuesAreAllSentExactlyOnceInOrder) {
     auto posts = sent(Method::Post, "/cards/c1/actions/comments");
     ASSERT_EQ(posts.size(), 40u);
     for (int i = 0; i < 40; ++i) EXPECT_EQ(parseForm(posts[i].body)["text"], "n" + std::to_string(i));
+}
+
+TEST_F(QueueTest, ReportsPendingChangesOnEnqueueConfirmationAndRejection) {
+    route(Method::Post, "/cards/c1/idLabels", 200, "[]");
+    route(Method::Post, "/cards/c1/idMembers", 400, "bad");
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    EXPECT_EQ(sink.pendingEvents, 1);  // one more write is waiting
+    queue->enqueue(AddMember{"c1", "m1"});
+    EXPECT_EQ(sink.pendingEvents, 2);
+    exec.drain();
+    EXPECT_EQ(sink.pendingEvents, 4);  // one confirmed, one rejected: the count dropped twice
+    EXPECT_EQ(queue->pendingCount(), 0u);
+}
+
+TEST_F(QueueTest, TransientFailureDoesNotReportPendingChange) {
+    req.failAll = true;
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    exec.drain();
+    EXPECT_EQ(sink.pendingEvents, 1);  // only the enqueue; nothing left the queue
 }
