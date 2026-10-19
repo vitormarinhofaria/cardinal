@@ -4,10 +4,21 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
 namespace cardinal {
+
+class AuthError : public std::runtime_error {
+public:
+    enum class Kind { TimedOut, Cancelled, BrowserFailed, ListenFailed };
+    AuthError(Kind kind, const std::string& what) : std::runtime_error(what), kind_(kind) {}
+    Kind kind() const { return kind_; }
+
+private:
+    Kind kind_;
+};
 
 // Opens a URL in the user's browser. Implemented by the UI layer.
 class BrowserOpener {
@@ -33,8 +44,8 @@ public:
     AuthFlow(const AuthFlow&) = delete;
     AuthFlow& operator=(const AuthFlow&) = delete;
 
-    // The future yields the token, or throws std::runtime_error (timeout, cancelled, browser
-    // could not be opened).
+    // The future yields the token, or throws AuthError (timeout, cancelled, browser could not be
+    // opened, port unavailable).
     std::future<std::string> run();
 
 private:

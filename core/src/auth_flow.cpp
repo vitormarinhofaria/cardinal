@@ -185,7 +185,8 @@ std::future<std::string> AuthFlow::run() {
     if (fd < 0 || ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0 ||
         ::listen(fd, 4) != 0 || ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
         if (fd >= 0) ::close(fd);
-        finish(promise, std::make_exception_ptr(std::runtime_error(
+        finish(promise, std::make_exception_ptr(AuthError(
+                            AuthError::Kind::ListenFailed,
                             "could not listen on 127.0.0.1:" + std::to_string(options_.port))));
         return future;
     }
@@ -202,8 +203,9 @@ std::future<std::string> AuthFlow::run() {
     try {
         opener_.open(url);
     } catch (const std::exception& e) {
-        finish(promise, std::make_exception_ptr(
-                            std::runtime_error(std::string("could not open the browser: ") + e.what())));
+        finish(promise, std::make_exception_ptr(AuthError(
+                            AuthError::Kind::BrowserFailed,
+                            std::string("could not open the browser: ") + e.what())));
         stop_ = true;
     }
     return future;
@@ -220,7 +222,8 @@ void AuthFlow::serve(int listenFd, unsigned short port, std::string nonce,
         auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
         if (left <= 0ms) {
-            finish(promise, std::make_exception_ptr(std::runtime_error("login timed out")));
+            finish(promise, std::make_exception_ptr(
+                                AuthError(AuthError::Kind::TimedOut, "login timed out")));
             break;
         }
         pollfd pfd{listenFd, POLLIN, 0};
@@ -263,7 +266,8 @@ void AuthFlow::serve(int listenFd, unsigned short port, std::string nonce,
         } catch (const std::future_error&) {  // already failed (e.g. browser could not open)
         }
     } else {
-        finish(promise, std::make_exception_ptr(std::runtime_error("login cancelled")));
+        finish(promise, std::make_exception_ptr(
+                                AuthError(AuthError::Kind::Cancelled, "login cancelled")));
     }
 }
 

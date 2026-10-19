@@ -218,7 +218,12 @@ TEST(AuthFlow, TimesOutAndClosesServer) {
     auto token = flow.run();
     auto lb = parseReturnUrl(browser.url);
     ASSERT_EQ(token.wait_for(5s), std::future_status::ready);
-    EXPECT_THROW(token.get(), std::runtime_error);
+    try {
+        token.get();
+        FAIL() << "expected AuthError";
+    } catch (const AuthError& e) {
+        EXPECT_EQ(e.kind(), AuthError::Kind::TimedOut);
+    }
     EXPECT_EQ(http(lb.port, get("/", lb.port)).status, 0);
 }
 
@@ -234,7 +239,12 @@ TEST(AuthFlow, DestructorCancelsAPendingFlowPromptly) {
     }
     EXPECT_LT(std::chrono::steady_clock::now() - start, 2s);
     ASSERT_EQ(token.wait_for(0ms), std::future_status::ready);
-    EXPECT_THROW(token.get(), std::runtime_error);
+    try {
+        token.get();
+        FAIL() << "expected AuthError";
+    } catch (const AuthError& e) {
+        EXPECT_EQ(e.kind(), AuthError::Kind::Cancelled);
+    }
     EXPECT_EQ(http(port, get("/", port)).status, 0);
 }
 
@@ -244,7 +254,12 @@ TEST(AuthFlow, BrowserFailureFailsTheFlowAndClosesTheServer) {
     AuthFlow flow("K", browser);
     auto token = flow.run();
     ASSERT_EQ(token.wait_for(2s), std::future_status::ready);
-    EXPECT_THROW(token.get(), std::runtime_error);
+    try {
+        token.get();
+        FAIL() << "expected AuthError";
+    } catch (const AuthError& e) {
+        EXPECT_EQ(e.kind(), AuthError::Kind::BrowserFailed);
+    }
 }
 
 TEST(AuthFlow, PinnedPortIsUsedWhenGiven) {
@@ -275,7 +290,12 @@ TEST(AuthFlow, PinnedPortInUseFailsClearly) {
     AuthFlow second("K", browser2, opts);
     auto t2 = second.run();
     ASSERT_EQ(t2.wait_for(1s), std::future_status::ready);
-    EXPECT_THROW(t2.get(), std::runtime_error);
+    try {
+        t2.get();
+        FAIL() << "expected AuthError";
+    } catch (const AuthError& e) {
+        EXPECT_EQ(e.kind(), AuthError::Kind::ListenFailed);
+    }
 }
 
 TEST(AuthFlow, RunningTwiceIsRefused) {

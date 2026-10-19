@@ -18,6 +18,8 @@ add_library(cardinal_core STATIC
   src/credentials_libsecret.cpp
   src/auth_flow.cpp
   src/viewmodel.cpp
+  src/app_context.cpp
+  src/session.cpp
   src/polling_event_source.cpp
   src/time_util.cpp
 )
