@@ -3,11 +3,7 @@
 // A small multi-request HTTP/1.1 server on 127.0.0.1 for integration tests. One connection per
 // request ("Connection: close"), served one at a time on a background thread.
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "net_compat.h"
 
 #include <atomic>
 #include <functional>
@@ -35,14 +31,13 @@ public:
     using Handler = std::function<HttpReply(const HttpRequestInfo&)>;
 
     explicit RoutedServer(Handler handler) : handler_(std::move(handler)) {
-        fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        int one = 1;
-        ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        fd_ = ::socket(AF_INET, SOCK_STREAM | net::kCloexec, 0);
+        net::reuseAddr(fd_);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         ::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
-        socklen_t len = sizeof addr;
+        net::socklen len = sizeof addr;
         ::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len);
         port_ = ntohs(addr.sin_port);
         ::listen(fd_, 16);
@@ -51,7 +46,7 @@ public:
     ~RoutedServer() {
         stop_ = true;
         thread_.join();
-        ::close(fd_);
+        net::close(fd_);
     }
     std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
@@ -69,23 +64,21 @@ public:
 private:
     void serve() {
         while (!stop_) {
-            pollfd p{fd_, POLLIN, 0};
-            if (::poll(&p, 1, 50) <= 0) continue;
-            int c = ::accept(fd_, nullptr, nullptr);
-            if (c < 0) continue;
+            if (net::pollIn(fd_, 50) <= 0) continue;
+            net::sock_t c = ::accept(fd_, nullptr, nullptr);
+            if (c == net::kBad) continue;
             handle(c);
-            ::close(c);
+            net::close(c);
         }
     }
 
-    void handle(int c) {
-        timeval tv{2, 0};
-        ::setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    void handle(net::sock_t c) {
+        net::setRecvTimeout(c, 2);
         std::string raw;
         char buf[4096];
         size_t headerEnd = std::string::npos, want = 0;
         while (true) {
-            ssize_t n = ::recv(c, buf, sizeof buf, 0);
+            auto n = ::recv(c, buf, sizeof buf, 0);
             if (n <= 0) break;
             raw.append(buf, static_cast<size_t>(n));
             if (headerEnd == std::string::npos) {
@@ -117,11 +110,11 @@ private:
         std::string out = "HTTP/1.1 " + std::to_string(r.status) + " X\r\nContent-Type: application/json\r\n"
                           "Content-Length: " + std::to_string(r.body.size()) +
                           "\r\nConnection: close\r\n\r\n" + r.body;
-        ::send(c, out.data(), out.size(), MSG_NOSIGNAL);
+        net::send(c, out);
     }
 
     Handler handler_;
-    int fd_ = -1;
+    net::sock_t fd_ = net::kBad;
     unsigned short port_ = 0;
     std::atomic<bool> stop_{false};
     std::mutex mu_;

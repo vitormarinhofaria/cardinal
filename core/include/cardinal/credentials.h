@@ -28,8 +28,13 @@ public:
     virtual void clear() = 0;
 };
 
+#if defined(_WIN32)
+// Windows Credential Manager (generic credential). `account` separates entries, e.g. in tests.
+std::unique_ptr<CredentialStore> makeWinCredCredentialStore(std::string account = "default");
+#else
 // Secret Service (GNOME Keyring, KWallet). `account` separates entries, e.g. in tests.
 std::unique_ptr<CredentialStore> makeLibsecretCredentialStore(std::string account = "default");
+#endif
 
 // Knows whether the user is signed in and reacts to Trello rejecting the token. Thread-safe.
 class AuthSession {

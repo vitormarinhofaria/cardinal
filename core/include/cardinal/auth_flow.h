@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <future>
 #include <memory>
 #include <stdexcept>
@@ -53,7 +54,7 @@ public:
     std::future<std::string> run();
 
 private:
-    void serve(int listenFd, unsigned short port, std::string nonce,
+    void serve(std::uintptr_t listenHandle, unsigned short port, std::string nonce,
                std::shared_ptr<std::promise<std::string>> promise);
 
     std::string apiKey_;

@@ -1,7 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#ifdef _WIN32
+#include <process.h>
+#define getpid _getpid
+#else
 #include <unistd.h>
+#endif
 
 #include "cardinal/credentials.h"
 
@@ -79,10 +84,16 @@ TEST(AuthSession, LogoutClearsWithoutAskingForLogin) {
     EXPECT_EQ(asked, 0);
 }
 
-// Touches the real Secret Service (may prompt to unlock the keyring): opt-in.
-TEST(LibsecretStore, RoundTripsAndClears) {
+// Touches the real secret store (Secret Service may prompt to unlock the keyring; on Windows it
+// writes to Credential Manager): opt-in.
+TEST(NativeCredentialStore, RoundTripsAndClears) {
     if (!std::getenv("CARDINAL_TEST_KEYRING")) GTEST_SKIP() << "set CARDINAL_TEST_KEYRING=1";
-    auto store = makeLibsecretCredentialStore("cardinal-test-" + std::to_string(::getpid()));
+    const std::string account = "cardinal-test-" + std::to_string(::getpid());
+#ifdef _WIN32
+    auto store = makeWinCredCredentialStore(account);
+#else
+    auto store = makeLibsecretCredentialStore(account);
+#endif
     EXPECT_FALSE(store->load().has_value());
     store->save({"tok-é-☕"});
     ASSERT_TRUE(store->load().has_value());

@@ -1,17 +1,15 @@
-#include <arpa/inet.h>
 #include <gtest/gtest.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <string>
 #include <thread>
 
+#include "net_compat.h"
 #include "cardinal/http.h"
 #include "http_server.h"
 
 using namespace cardinal;
+namespace net = cardinal::testing::net;
 using namespace std::chrono_literals;
 
 namespace {
@@ -21,22 +19,21 @@ class LoopbackServer {
 public:
     explicit LoopbackServer(std::string reply) : reply_(std::move(reply)) {
         fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        int one = 1;
-        ::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        net::reuseAddr(fd_);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = 0;
         ::bind(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
-        socklen_t len = sizeof addr;
+        net::socklen len = sizeof addr;
         ::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len);
         port_ = ntohs(addr.sin_port);
         ::listen(fd_, 1);
         thread_ = std::thread([this] { serve(); });
     }
     ~LoopbackServer() {
-        ::shutdown(fd_, SHUT_RDWR);
-        ::close(fd_);
+        ::shutdown(fd_, net::kShutBoth);
+        net::close(fd_);
         thread_.join();
     }
     std::string url(const std::string& path) const {
@@ -46,14 +43,14 @@ public:
 
 private:
     void serve() {
-        int c = ::accept(fd_, nullptr, nullptr);
-        if (c < 0) return;
+        net::sock_t c = ::accept(fd_, nullptr, nullptr);
+        if (c == net::kBad) return;
         std::string req;
         char buf[4096];
         size_t headerEnd = std::string::npos;
         size_t want = 0;
         while (true) {
-            ssize_t n = ::recv(c, buf, sizeof buf, 0);
+            auto n = ::recv(c, buf, sizeof buf, 0);
             if (n <= 0) break;
             req.append(buf, static_cast<size_t>(n));
             if (headerEnd == std::string::npos) {
@@ -67,12 +64,12 @@ private:
             if (headerEnd != std::string::npos && req.size() >= want) break;
         }
         request_ = req;
-        ::send(c, reply_.data(), reply_.size(), MSG_NOSIGNAL);
-        ::close(c);
+        net::send(c, reply_);
+        net::close(c);
     }
 
     std::string reply_;
-    int fd_ = -1;
+    net::sock_t fd_ = net::kBad;
     uint16_t port_ = 0;
     std::string request_;
     std::thread thread_;

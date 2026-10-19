@@ -1,10 +1,15 @@
 #include "cardinal/auth_flow.h"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <map>
@@ -17,6 +22,43 @@ namespace cardinal {
 namespace {
 
 using namespace std::chrono_literals;
+
+#ifdef _WIN32
+using socket_t = SOCKET;
+constexpr socket_t kBadSocket = INVALID_SOCKET;
+constexpr int kNoSignal = 0;
+void closeSocket(socket_t s) { ::closesocket(s); }
+int pollOne(socket_t s, int timeoutMs) {
+    WSAPOLLFD pfd{s, POLLRDNORM, 0};
+    return ::WSAPoll(&pfd, 1, timeoutMs);
+}
+void setRecvTimeout(socket_t s, int seconds) {
+    DWORD ms = static_cast<DWORD>(seconds) * 1000;
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&ms), sizeof ms);
+}
+// Winsock must be initialised once per process before any socket call.
+bool ensureSockets() {
+    static const bool ok = [] {
+        WSADATA data;
+        return ::WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    return ok;
+}
+#else
+using socket_t = int;
+constexpr socket_t kBadSocket = -1;
+constexpr int kNoSignal = MSG_NOSIGNAL;
+void closeSocket(socket_t s) { ::close(s); }
+int pollOne(socket_t s, int timeoutMs) {
+    pollfd pfd{s, POLLIN, 0};
+    return ::poll(&pfd, 1, timeoutMs);
+}
+void setRecvTimeout(socket_t s, int seconds) {
+    timeval tv{seconds, 0};
+    ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+}
+bool ensureSockets() { return true; }
+#endif
 
 constexpr size_t kMaxRequest = 16 * 1024;
 
@@ -73,14 +115,13 @@ struct Request {
     bool valid = false;
 };
 
-Request readRequest(int fd) {
-    timeval tv{2, 0};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+Request readRequest(socket_t fd) {
+    setRecvTimeout(fd, 2);
     std::string raw;
     char buf[2048];
     size_t headerEnd = std::string::npos, want = 0;
     while (raw.size() < kMaxRequest) {
-        ssize_t n = ::recv(fd, buf, sizeof buf, 0);
+        auto n = ::recv(fd, buf, sizeof buf, 0);
         if (n <= 0) break;
         raw.append(buf, static_cast<size_t>(n));
         if (headerEnd == std::string::npos) {
@@ -138,7 +179,7 @@ std::string queryValue(const std::string& query, const std::string& key) {
     return "";
 }
 
-void respond(int fd, int status, const char* reason, const std::string& body,
+void respond(socket_t fd, int status, const char* reason, const std::string& body,
              const char* type = "text/plain; charset=utf-8") {
     std::string out = "HTTP/1.1 " + std::to_string(status) + " " + reason +
                       "\r\nContent-Type: " + type +
@@ -148,7 +189,7 @@ void respond(int fd, int status, const char* reason, const std::string& body,
                       "connect-src 'self'; style-src 'unsafe-inline'"
                       "\r\nConnection: close\r\n\r\n" +
                       body;
-    ::send(fd, out.data(), out.size(), MSG_NOSIGNAL);
+    ::send(fd, out.data(), static_cast<int>(out.size()), kNoSignal);
 }
 
 void finish(const std::shared_ptr<std::promise<std::string>>& p, std::exception_ptr e) {
@@ -179,17 +220,26 @@ std::future<std::string> AuthFlow::run() {
     auto promise = std::make_shared<std::promise<std::string>>();
     auto future = promise->get_future();
 
-    int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#ifdef _WIN32
+    // No SO_REUSEADDR on Windows: it would let another process share the port.
+    socket_t fd = ensureSockets() ? ::socket(AF_INET, SOCK_STREAM, 0) : kBadSocket;
+#else
+    socket_t fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+#endif
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // never reachable from the network
     addr.sin_port = htons(options_.port);
+#ifdef _WIN32
+    int len = sizeof addr;
+#else
     socklen_t len = sizeof addr;
-    if (fd < 0 || ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0 ||
+#endif
+    if (fd == kBadSocket || ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0 ||
         ::listen(fd, 4) != 0 || ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
-        if (fd >= 0) ::close(fd);
+        if (fd != kBadSocket) closeSocket(fd);
         finish(promise, std::make_exception_ptr(AuthError(
                             AuthError::Kind::ListenFailed,
                             "could not listen on 127.0.0.1:" + std::to_string(options_.port))));
@@ -197,7 +247,9 @@ std::future<std::string> AuthFlow::run() {
     }
     const unsigned short port = ntohs(addr.sin_port);
     const std::string nonce = randomHex(16);
-    thread_ = std::thread([this, fd, port, nonce, promise] { serve(fd, port, nonce, promise); });
+    thread_ = std::thread([this, fd, port, nonce, promise] {
+        serve(static_cast<std::uintptr_t>(fd), port, nonce, promise);
+    });
 
     const std::string returnUrl =
         "http://127.0.0.1:" + std::to_string(port) + "/callback?nonce=" + nonce;
@@ -216,8 +268,9 @@ std::future<std::string> AuthFlow::run() {
     return future;
 }
 
-void AuthFlow::serve(int listenFd, unsigned short port, std::string nonce,
+void AuthFlow::serve(std::uintptr_t listenHandle, unsigned short port, std::string nonce,
                      std::shared_ptr<std::promise<std::string>> promise) {
+    const auto listenFd = static_cast<socket_t>(listenHandle);
     const auto deadline = std::chrono::steady_clock::now() + options_.timeout;
     const std::string hostA = "127.0.0.1:" + std::to_string(port);
     const std::string hostB = "localhost:" + std::to_string(port);
@@ -231,10 +284,13 @@ void AuthFlow::serve(int listenFd, unsigned short port, std::string nonce,
                                 AuthError(AuthError::Kind::TimedOut, "login timed out")));
             break;
         }
-        pollfd pfd{listenFd, POLLIN, 0};
-        if (::poll(&pfd, 1, static_cast<int>(std::min(left, 100ms).count())) <= 0) continue;
-        int client = ::accept4(listenFd, nullptr, nullptr, SOCK_CLOEXEC);
-        if (client < 0) continue;
+        if (pollOne(listenFd, static_cast<int>(std::min(left, 100ms).count())) <= 0) continue;
+#ifdef _WIN32
+        socket_t client = ::accept(listenFd, nullptr, nullptr);
+#else
+        socket_t client = ::accept4(listenFd, nullptr, nullptr, SOCK_CLOEXEC);
+#endif
+        if (client == kBadSocket) continue;
 
         Request req = readRequest(client);
         if (!req.valid) {
@@ -262,9 +318,9 @@ void AuthFlow::serve(int listenFd, unsigned short port, std::string nonce,
         } else {
             respond(client, 404, "Not Found", "not found");
         }
-        ::close(client);
+        closeSocket(client);
     }
-    ::close(listenFd);
+    closeSocket(listenFd);
     if (token) {
         try {
             promise->set_value(*token);

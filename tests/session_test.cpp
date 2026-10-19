@@ -1,8 +1,4 @@
-#include <arpa/inet.h>
 #include <gtest/gtest.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <filesystem>
@@ -10,6 +6,7 @@
 #include <sstream>
 #include <thread>
 
+#include "net_compat.h"
 #include "cardinal/session.h"
 #include "fakes.h"
 #include "http_server.h"
@@ -92,7 +89,7 @@ void deliverTokenLikeTheBrowser(const std::string& authorizeUrl, const std::stri
     unsigned short port = static_cast<unsigned short>(std::stoi(ret.substr(colon, ret.find('/', colon) - colon)));
     std::string nonce = ret.substr(ret.find("nonce=") + 6);
 
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    net::sock_t fd = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -100,10 +97,10 @@ void deliverTokenLikeTheBrowser(const std::string& authorizeUrl, const std::stri
     ASSERT_EQ(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr), 0);
     std::string req = "POST /token?nonce=" + nonce + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) +
                       "\r\nContent-Length: " + std::to_string(token.size()) + "\r\nConnection: close\r\n\r\n" + token;
-    ::send(fd, req.data(), req.size(), MSG_NOSIGNAL);
+    net::send(fd, req);
     char buf[256];
     while (::recv(fd, buf, sizeof buf, 0) > 0) {}
-    ::close(fd);
+    net::close(fd);
 }
 
 std::atomic<int> gBoardsDelayMs{0};

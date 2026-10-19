@@ -207,10 +207,12 @@ std::set<std::string> toSet(std::span<const std::string> ids) {
 
 Store Store::open(const std::filesystem::path& path) {
     sqlite3* db = nullptr;
-    if (sqlite3_open(path.string().c_str(), &db) != SQLITE_OK) {
+    const auto u8 = path.u8string();  // sqlite wants UTF-8; string() is the ANSI page on Windows
+    const std::string utf8Path(u8.begin(), u8.end());
+    if (sqlite3_open(utf8Path.c_str(), &db) != SQLITE_OK) {
         std::string msg = db ? sqlite3_errmsg(db) : "out of memory";
         sqlite3_close(db);
-        throw std::runtime_error("open " + path.string() + ": " + msg);
+        throw std::runtime_error("open " + utf8Path + ": " + msg);
     }
     Store s(db);
     exec(db, "PRAGMA journal_mode = WAL");

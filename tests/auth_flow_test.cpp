@@ -1,17 +1,15 @@
-#include <arpa/inet.h>
 #include <gtest/gtest.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <map>
 #include <sstream>
 
+#include "net_compat.h"
 #include "cardinal/auth_flow.h"
 #include "cardinal/trello_api.h"
 
 using namespace cardinal;
+namespace net = cardinal::testing::net;
 using namespace std::chrono_literals;
 
 namespace {
@@ -69,21 +67,21 @@ struct Reply {
 
 // Raw HTTP/1.1 over a plain socket; status 0 means the connection was refused.
 Reply http(unsigned short port, const std::string& request) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    net::sock_t fd = ::socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = htons(port);
     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
-        ::close(fd);
+        net::close(fd);
         return {};
     }
-    ::send(fd, request.data(), request.size(), MSG_NOSIGNAL);
+    net::send(fd, request);
     std::string raw;
     char buf[4096];
-    ssize_t n;
+    net::ssize n;
     while ((n = ::recv(fd, buf, sizeof buf, 0)) > 0) raw.append(buf, static_cast<size_t>(n));
-    ::close(fd);
+    net::close(fd);
     Reply r;
     if (raw.size() > 12) r.status = std::stoi(raw.substr(9, 3));
     auto split = raw.find("\r\n\r\n");
@@ -263,15 +261,15 @@ TEST(AuthFlow, BrowserFailureFailsTheFlowAndClosesTheServer) {
 }
 
 TEST(AuthFlow, PinnedPortIsUsedWhenGiven) {
-    int probe = ::socket(AF_INET, SOCK_STREAM, 0);  // find a free port, then release it
+    net::sock_t probe = ::socket(AF_INET, SOCK_STREAM, 0);  // find a free port, then release it
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     ::bind(probe, reinterpret_cast<sockaddr*>(&a), sizeof a);
-    socklen_t len = sizeof a;
+    net::socklen len = sizeof a;
     ::getsockname(probe, reinterpret_cast<sockaddr*>(&a), &len);
     unsigned short port = ntohs(a.sin_port);
-    ::close(probe);
+    net::close(probe);
 
     FakeBrowser browser;
     AuthOptions opts;
