@@ -14,6 +14,9 @@ add_library(cardinal_core STATIC
   src/executor.cpp
   src/sync.cpp
   src/write_queue.cpp
+  src/credentials.cpp
+  src/credentials_libsecret.cpp
+  src/auth_flow.cpp
   src/polling_event_source.cpp
   src/time_util.cpp
 )
