@@ -11,6 +11,8 @@ add_library(cardinal_core STATIC
   src/scheduler.cpp
   src/http_curl.cpp
   src/trello_api.cpp
+  src/executor.cpp
+  src/sync.cpp
 )
 target_include_directories(cardinal_core PUBLIC include)
 target_link_libraries(cardinal_core PUBLIC

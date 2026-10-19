@@ -155,7 +155,7 @@ std::future<CardCore> TrelloApi::cardCore(const std::string& cardId) {
     return then(
         requester_.submit(Priority::Interactive, Method::Get,
                           url("/cards/" + urlEncode(cardId),
-                              {{"fields", std::string("name,desc,") + kCardListFields},
+                              {{"fields", std::string("name,desc,closed,") + kCardListFields},
                                {"actions", "commentCard"},
                                {"actions_limit", "50"},
                                {"action_fields", "data,date,idMemberCreator"}})),

@@ -49,6 +49,7 @@ struct Card {
     std::vector<std::string> memberIds;
     int commentCount = 0;
     std::string dateLastActivity;
+    bool closed = false;  // archived; only seen on direct fetches, never cached
 };
 
 struct BoardSnapshot {

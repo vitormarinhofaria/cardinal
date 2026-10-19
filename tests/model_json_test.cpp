@@ -85,3 +85,8 @@ TEST(ParseComment, ReadsCommentActionShape) {
     EXPECT_EQ(c.text, "olá 👋");
     EXPECT_EQ(c.date, "2026-10-19T12:00:00.000Z");
 }
+
+TEST(ParseCard, ReadsClosedFlagAndDefaultsToOpen) {
+    EXPECT_TRUE(parseCard({{"id", "c"}, {"closed", true}}).closed);
+    EXPECT_FALSE(parseCard({{"id", "c"}}).closed);
+}

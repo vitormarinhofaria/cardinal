@@ -86,3 +86,54 @@ public:
 };
 
 }  // namespace cardinal::testing
+
+namespace cardinal::testing {
+
+struct Route {
+    std::string path;      // path below the API base, without query
+    std::string contains;  // substring the URL must also contain ("" = any)
+    HttpResponse response;
+};
+
+// Answers by route (first match wins); unknown paths get 404. `failAll` simulates being offline.
+class RouteRequester : public Requester {
+public:
+    std::future<HttpResponse> submit(Priority p, Method m, std::string url,
+                                     std::string body) override {
+        std::lock_guard lk(mu);
+        calls.push_back({p, m, url, body});
+        std::promise<HttpResponse> promise;
+        if (failAll) {
+            promise.set_exception(std::make_exception_ptr(std::runtime_error("offline")));
+            return promise.get_future();
+        }
+        const std::string base = "https://api.trello.com/1";
+        std::string rest = url.substr(base.size());
+        std::string path = rest.substr(0, rest.find('?'));
+        HttpResponse r{404, "not found"};
+        for (const auto& route : routes) {
+            if (route.path == path &&
+                (route.contains.empty() || url.find(route.contains) != std::string::npos)) {
+                r = route.response;
+                break;
+            }
+        }
+        promise.set_value(r);
+        return promise.get_future();
+    }
+
+    size_t countPath(const std::string& path) {
+        std::lock_guard lk(mu);
+        size_t n = 0;
+        for (const auto& c : calls)
+            if (c.url.find("https://api.trello.com/1" + path + "?") == 0) ++n;
+        return n;
+    }
+
+    std::vector<Route> routes;
+    std::vector<Submitted> calls;
+    bool failAll = false;
+    std::mutex mu;
+};
+
+}  // namespace cardinal::testing

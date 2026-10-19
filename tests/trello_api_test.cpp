@@ -156,6 +156,7 @@ TEST_F(ApiTest, CardCoreIsInteractiveAndParsesDescriptionAndComments) {
     auto q = queryOf(req.calls[0].url);
     EXPECT_EQ(q["actions"], "commentCard");
     EXPECT_NE(q["fields"].find("desc"), std::string::npos);
+    EXPECT_NE(q["fields"].find("closed"), std::string::npos);  // archived cards must be detectable
     EXPECT_EQ(q["checklists"], "");  // heavy data stays out of the core request
     EXPECT_EQ(q["attachments"], "");
 }
