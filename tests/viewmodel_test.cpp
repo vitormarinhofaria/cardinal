@@ -664,3 +664,18 @@ TEST_F(VmTest, ConfirmedWriteProvesTheNetworkIsBack) {
     pump();
     EXPECT_FALSE(app->status().get().offline);
 }
+
+TEST_F(VmTest, AListTheUserEmptiedStaysAnEmptyLoadedList) {
+    make();
+    auto board = app->openBoard("b1");
+    board->expandList("l2");  // l2 holds only c3
+    pump();
+    routeFirst(Method::Put, "/cards/c3", 200, R"({"id":"c3","idList":"l1","name":"Migrar","pos":1.5})");
+    board->moveCard("c3", "l1", 1);
+    pump();
+    auto l2 = board->column("l2");
+    ASSERT_TRUE(l2);
+    EXPECT_TRUE(l2->loaded);  // not a "1 card, not loaded yet" ghost
+    EXPECT_TRUE(l2->cards.empty());
+    EXPECT_EQ(l2->cardCount, 0);
+}

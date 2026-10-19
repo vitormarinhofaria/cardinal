@@ -135,6 +135,7 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         for (const auto& c : cards) ids.push_back(c.id);
         store.upsertCardSummaries(cards);
         store.pruneListCards(listId, ids);
+        store.markListLoaded(listId, static_cast<int>(cards.size()));
         ChangeSet c;
         c.listCards = {listId};
         sink.onChanged(c);
@@ -184,9 +185,12 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
             removeCard(cardId, cached);
             return;
         }
-        std::vector<Card> one{core.card};
-        store.upsertCards(one);
-        store.replaceComments(cardId, core.comments);
+        // Unsent edits and comments are the user's truth until Trello has them.
+        if (!store.hasPendingOps(cardId)) {
+            std::vector<Card> one{core.card};
+            store.upsertCards(one);
+            store.replaceComments(cardId, core.comments);
+        }
         ChangeSet c;
         c.cardDetails = {cardId};
         if (cached && cached->listId != core.card.listId) {

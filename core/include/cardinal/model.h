@@ -19,6 +19,7 @@ struct List {
     std::string name;
     double pos = 0;
     int cardCount = 0;
+    bool loaded = false;  // its cards were fetched at least once (an empty list is still loaded)
 };
 
 struct Label {

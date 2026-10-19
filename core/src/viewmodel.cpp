@@ -369,7 +369,7 @@ struct BoardVM::Core : Listener, std::enable_shared_from_this<Core> {
             col->name = l.name;
             col->pos = l.pos;
             auto cached = engine.cards(l.id);
-            col->loaded = !cached.empty() || l.cardCount == 0;
+            col->loaded = l.loaded || !cached.empty() || l.cardCount == 0;
             col->cardCount = col->loaded ? static_cast<int>(cached.size()) : l.cardCount;
             for (const auto& c : cached) {
                 CardRow row{c.id, c.name, c.pos, {}, {}, c.commentCount};

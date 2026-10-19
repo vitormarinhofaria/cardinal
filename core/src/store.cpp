@@ -10,7 +10,7 @@
 namespace cardinal {
 namespace {
 
-constexpr int kSchemaVersion = 2;
+constexpr int kSchemaVersion = 3;
 
 [[noreturn]] void fail(sqlite3* db, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + sqlite3_errmsg(db));
@@ -121,6 +121,10 @@ void migrate(sqlite3* db) {
                 PRIMARY KEY(card_id, id));
         )sql");
     }
+    if (version < 3) {
+        // cards_loaded: the list's cards were fetched at least once (even if there were none)
+        exec(db, "ALTER TABLE lists ADD COLUMN cards_loaded INTEGER NOT NULL DEFAULT 0");
+    }
     exec(db, ("PRAGMA user_version = " + std::to_string(kSchemaVersion)).c_str());
     tx.commit();
 }
@@ -164,11 +168,21 @@ void deleteCardRows(sqlite3* db, const std::string& cardId) {
     m.run();
 }
 
+// Cards the server has not heard about yet: created offline ("tmp-") or edited/moved with a write
+// still queued. A refresh must not delete them just because the server does not know them.
+std::set<std::string> unsentCards(sqlite3* db) {
+    std::set<std::string> out;
+    Stmt s(db, "SELECT DISTINCT card_id FROM pending_ops");
+    while (s.step()) out.insert(s.col_text(0));
+    return out;
+}
+
 std::vector<std::string> pruneListCardsRows(sqlite3* db, const std::string& listId,
                                             const std::set<std::string>& keep) {
     std::vector<std::string> removed;
+    const auto unsent = unsentCards(db);
     for (auto& id : idsOf(db, "SELECT id FROM cards WHERE list_id = ?", listId)) {
-        if (keep.count(id)) continue;
+        if (keep.count(id) || unsent.count(id) || id.rfind("tmp-", 0) == 0) continue;
         deleteCardRows(db, id);
         removed.push_back(std::move(id));
     }
@@ -236,7 +250,9 @@ void Store::upsertLists(std::span<const List> lists) {
     std::lock_guard lk(*mu_);
     Tx tx(db_);
     Stmt s(db_,
-           "INSERT OR REPLACE INTO lists(id, board_id, name, pos, card_count) VALUES(?,?,?,?,?)");
+           "INSERT INTO lists(id, board_id, name, pos, card_count) VALUES(?,?,?,?,?) "
+           "ON CONFLICT(id) DO UPDATE SET board_id=excluded.board_id, name=excluded.name, "
+           "pos=excluded.pos, card_count=excluded.card_count");  // keeps cards_loaded
     for (const auto& l : lists) {
         s.text(1, l.id);
         s.text(2, l.boardId);
@@ -280,11 +296,12 @@ std::vector<Board> Store::boards() {
 std::vector<List> Store::lists(const std::string& boardId) {
     std::lock_guard lk(*mu_);
     Stmt s(db_,
-           "SELECT id, board_id, name, pos, card_count FROM lists WHERE board_id = ? ORDER BY pos");
+           "SELECT id, board_id, name, pos, card_count, cards_loaded FROM lists WHERE board_id = ? ORDER BY pos");
     s.text(1, boardId);
     std::vector<List> out;
     while (s.step())
-        out.push_back({s.col_text(0), s.col_text(1), s.col_text(2), s.col_real(3), s.col_int(4)});
+        out.push_back({s.col_text(0), s.col_text(1), s.col_text(2), s.col_real(3), s.col_int(4),
+                       s.col_int(5) != 0});
     return out;
 }
 
@@ -354,7 +371,8 @@ void Store::upsertCardSummaries(std::span<const Card> cards) {
                  "list_id=excluded.list_id, name=excluded.name, pos=excluded.pos, "
                  "label_ids=excluded.label_ids, member_ids=excluded.member_ids, "
                  "comment_count=excluded.comment_count, "
-                 "date_last_activity=excluded.date_last_activity")
+                 "date_last_activity=excluded.date_last_activity "
+                 "WHERE cards.id NOT IN (SELECT card_id FROM pending_ops)")
                     .c_str());
     for (const auto& c : cards) {
         s.text(1, c.id);
@@ -539,6 +557,25 @@ void Store::removePendingOp(std::int64_t id) {
     std::lock_guard lk(*mu_);
     Stmt s(db_, "DELETE FROM pending_ops WHERE id = ?");
     s.integer(1, id);
+    s.run();
+}
+
+}  // namespace cardinal
+
+namespace cardinal {
+
+bool Store::hasPendingOps(const std::string& cardId) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "SELECT 1 FROM pending_ops WHERE card_id = ? LIMIT 1");
+    s.text(1, cardId);
+    return s.step();
+}
+
+void Store::markListLoaded(const std::string& listId, int cardCount) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "UPDATE lists SET cards_loaded = 1, card_count = ? WHERE id = ?");
+    s.integer(1, cardCount);
+    s.text(2, listId);
     s.run();
 }
 

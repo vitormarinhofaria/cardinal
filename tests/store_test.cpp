@@ -312,3 +312,93 @@ TEST_F(StoreTest, PendingOpsAreOrderedPersistedAndRemovable) {
     EXPECT_EQ(s.pendingOps()[0].id, b);
     s.removePendingOp(a);  // removing twice is harmless
 }
+
+TEST_F(StoreTest, SummaryUpsertDoesNotTouchCardsWithUnsentWrites) {
+    Store s = Store::open(path_);
+    std::vector<Card> mine{makeCard("c1", "l2", "meu título", 5), makeCard("c2", "l1", "velho")};
+    s.upsertCards(mine);
+    s.addPendingOp("move", "c1", "{}", 1);
+
+    std::vector<Card> server{makeCard("c1", "l1", "título do servidor", 1), makeCard("c2", "l1", "novo", 2)};
+    s.upsertCardSummaries(server);
+    EXPECT_EQ(s.card("c1")->name, "meu título");  // the user's unsent change wins until it is sent
+    EXPECT_EQ(s.card("c1")->listId, "l2");
+    EXPECT_EQ(s.card("c2")->name, "novo");
+
+    s.removePendingOp(s.pendingOps()[0].id);
+    s.upsertCardSummaries(server);  // once sent, the server's word is final again
+    EXPECT_EQ(s.card("c1")->name, "título do servidor");
+}
+
+TEST_F(StoreTest, PruneKeepsTemporaryCardsAndCardsWithUnsentWrites) {
+    Store s = Store::open(path_);
+    std::vector<Card> cards{makeCard("tmp-abc", "l1", "criado offline"), makeCard("c1", "l1", "com escrita pendente"),
+                            makeCard("c2", "l1", "arquivado")};
+    s.upsertCards(cards);
+    s.addPendingOp("edit", "c1", "{}", 1);
+    auto removed = s.pruneListCards("l1", {});
+    EXPECT_EQ(removed, (std::vector<std::string>{"c2"}));
+    EXPECT_TRUE(s.card("tmp-abc").has_value());
+    EXPECT_TRUE(s.card("c1").has_value());
+}
+
+TEST_F(StoreTest, HasPendingOpsTracksTheQueue) {
+    Store s = Store::open(path_);
+    EXPECT_FALSE(s.hasPendingOps("c1"));
+    auto id = s.addPendingOp("edit", "c1", "{}", 1);
+    EXPECT_TRUE(s.hasPendingOps("c1"));
+    EXPECT_FALSE(s.hasPendingOps("c2"));
+    s.removePendingOp(id);
+    EXPECT_FALSE(s.hasPendingOps("c1"));
+}
+
+TEST_F(StoreTest, ListLoadedFlagSurvivesBoardSnapshotRefreshes) {
+    Store s = Store::open(path_);
+    std::vector<List> lists{{"l1", "b1", "A", 1, 5}};
+    s.upsertLists(lists);
+    EXPECT_FALSE(s.lists("b1")[0].loaded);
+    s.markListLoaded("l1", 0);  // fetched, and it is empty
+    EXPECT_TRUE(s.lists("b1")[0].loaded);
+    EXPECT_EQ(s.lists("b1")[0].cardCount, 0);
+
+    lists[0].cardCount = 7;  // the next snapshot brings a count but must not forget the load
+    lists[0].name = "A renomeada";
+    s.upsertLists(lists);
+    EXPECT_TRUE(s.lists("b1")[0].loaded);
+    EXPECT_EQ(s.lists("b1")[0].name, "A renomeada");
+}
+
+TEST_F(StoreTest, V2DatabaseGainsTheLoadedColumnKeepingItsLists) {
+    {
+        sqlite3* db = nullptr;
+        ASSERT_EQ(sqlite3_open(path_.string().c_str(), &db), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(db, R"sql(
+            CREATE TABLE boards(id TEXT PRIMARY KEY, name TEXT NOT NULL, closed INTEGER NOT NULL);
+            CREATE TABLE lists(id TEXT PRIMARY KEY, board_id TEXT NOT NULL, name TEXT NOT NULL,
+                pos REAL NOT NULL, card_count INTEGER NOT NULL);
+            CREATE TABLE cards(id TEXT PRIMARY KEY, list_id TEXT NOT NULL, name TEXT NOT NULL,
+                desc TEXT NOT NULL, pos REAL NOT NULL, label_ids TEXT NOT NULL,
+                member_ids TEXT NOT NULL, comment_count INTEGER NOT NULL,
+                date_last_activity TEXT NOT NULL);
+            CREATE TABLE sync_cursor(board_id TEXT PRIMARY KEY, cursor TEXT NOT NULL);
+            CREATE TABLE list_touch(list_id TEXT PRIMARY KEY, touched_at INTEGER NOT NULL);
+            CREATE TABLE pending_ops(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
+                card_id TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL);
+            CREATE TABLE labels(board_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL,
+                ord INTEGER NOT NULL, PRIMARY KEY(board_id, id));
+            CREATE TABLE members(board_id TEXT NOT NULL, id TEXT NOT NULL, full_name TEXT NOT NULL,
+                initials TEXT NOT NULL, ord INTEGER NOT NULL, PRIMARY KEY(board_id, id));
+            CREATE TABLE comments(card_id TEXT NOT NULL, id TEXT NOT NULL, author_id TEXT NOT NULL,
+                text TEXT NOT NULL, date TEXT NOT NULL, ord INTEGER NOT NULL, PRIMARY KEY(card_id, id));
+            INSERT INTO lists VALUES('l1','b1','Antiga',1,3);
+            PRAGMA user_version = 2;
+        )sql", nullptr, nullptr, nullptr), SQLITE_OK);
+        sqlite3_close(db);
+    }
+    Store s = Store::open(path_);
+    ASSERT_EQ(s.lists("b1").size(), 1u);
+    EXPECT_EQ(s.lists("b1")[0].name, "Antiga");
+    EXPECT_FALSE(s.lists("b1")[0].loaded);
+    s.markListLoaded("l1", 3);
+    EXPECT_TRUE(s.lists("b1")[0].loaded);
+}

@@ -54,6 +54,8 @@ public:
     void pruneBoardLists(const std::string& boardId, std::span<const std::string> keepIds);
     void pruneBoards(std::span<const std::string> keepIds);
     void deleteCard(const std::string& cardId);
+    bool hasPendingOps(const std::string& cardId);
+    void markListLoaded(const std::string& listId, int cardCount);
 
     void replaceLabels(const std::string& boardId, std::span<const Label> labels);
     void replaceMembers(const std::string& boardId, std::span<const Member> members);

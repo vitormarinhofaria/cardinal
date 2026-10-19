@@ -654,3 +654,46 @@ TEST_F(SyncTest, ExpiredToken401IsStillReportedAs401) {
     ASSERT_EQ(sink.errors.size(), 1u);
     EXPECT_EQ(sink.errors[0].status, 401);
 }
+
+TEST_F(SyncTest, OpenCardKeepsTheUsersUnsentEditsAndComments) {
+    std::vector<Card> mine{card("c1", "l1", "Corrigir login", "minha descrição ainda não enviada")};
+    store->upsertCards(mine);
+    store->replaceComments("c1", std::vector<Comment>{{"tmp-1", "me", "comentário não enviado", "d"}});
+    store->addPendingOp("edit", "c1", "{}", 1);
+    makeEngine();
+    engine->openCard("c1");
+    exec.drain();
+    EXPECT_EQ(engine->card("c1")->desc, "minha descrição ainda não enviada");
+    ASSERT_EQ(engine->comments("c1").size(), 1u);
+    EXPECT_EQ(engine->comments("c1")[0].id, "tmp-1");
+}
+
+TEST_F(SyncTest, ListRefreshKeepsUnsentMovesAndTemporaryCards) {
+    std::vector<Card> cached{card("c1", "l2", "movido por mim"), card("tmp-xyz", "l1", "criado offline")};
+    cached[0].pos = 99;
+    store->upsertCards(cached);
+    store->addPendingOp("move", "c1", "{}", 1);
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    EXPECT_EQ(engine->card("c1")->listId, "l2");
+    EXPECT_EQ(engine->card("c1")->name, "movido por mim");
+    EXPECT_TRUE(engine->card("tmp-xyz").has_value());
+}
+
+TEST_F(SyncTest, LoadingAListMarksItLoadedEvenWhenItIsEmpty) {
+    req.routes.insert(req.routes.begin(), {"/lists/l1/cards", "", {200, "[]"}});
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    bool found = false;
+    for (const auto& l : engine->lists("b1"))
+        if (l.id == "l1") {
+            found = true;
+            EXPECT_TRUE(l.loaded);
+            EXPECT_EQ(l.cardCount, 0);
+        }
+    EXPECT_TRUE(found);
+    for (const auto& l : engine->lists("b1"))
+        if (l.id == "l3") EXPECT_FALSE(l.loaded);  // cold lists stay unloaded
+}
