@@ -709,6 +709,8 @@ void AppModel::retry() {
     services_->engine->start();
 }
 
+void AppModel::quiesce() { services_->dead = true; }
+
 void AppModel::onNetworkOk() { services_->networkOk(); }
 
 void AppModel::onNetworkError(const SyncError& error) { services_->reportError(error.status, error.what); }

@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <filesystem>
 #include <map>
 #include <sstream>
@@ -105,10 +106,15 @@ void deliverTokenLikeTheBrowser(const std::string& authorizeUrl, const std::stri
     ::close(fd);
 }
 
+std::atomic<int> gBoardsDelayMs{0};
+
 HttpReply fakeTrello(const HttpRequestInfo& r) {
     if (r.query.find("key=KEY") == std::string::npos) return {401, "invalid key"};
     if (r.query.find("token=GOODTOKEN0123456789") == std::string::npos) return {401, "invalid token"};
-    if (r.path == "/1/members/me/boards") return {200, R"([{"id":"b1","name":"Produto","closed":false}])"};
+    if (r.path == "/1/members/me/boards") {
+        if (gBoardsDelayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(gBoardsDelayMs.load()));
+        return {200, R"([{"id":"b1","name":"Produto","closed":false}])"};
+    }
     return {200, "[]"};
 }
 
@@ -308,4 +314,37 @@ TEST_F(SessionTest, SubscriberRemovedWhileSigningOutIsNotCalledAfterwards) {
     ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::SignedOut; }));
     // the status update that carried loginRequired reached the page at most once, never after it left
     EXPECT_LE(pageCalls - before, 1);
+}
+
+TEST_F(SessionTest, LogoutDoesNotBlockTheUiThreadOnNetworkRequestsInFlight) {
+    gBoardsDelayMs = 3000;
+    creds.value = Credentials{kGoodToken};
+    make();
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::Ready; }));
+    session->model()->start();
+    ASSERT_TRUE(settle([&] { return server->count("GET", "/1/members/me/boards") >= 1; }));  // in flight
+
+    auto start = std::chrono::steady_clock::now();
+    session->logout();
+    ui.runAll();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 300ms);
+    EXPECT_EQ(phase(), SessionState::Phase::SignedOut);
+
+    start = std::chrono::steady_clock::now();
+    session.reset();  // joins the background teardown: the request is aborted, not waited for
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 2000ms);
+    gBoardsDelayMs = 0;
+}
+
+TEST_F(SessionTest, DestroyingTheSessionAbortsRequestsInFlightInsteadOfWaiting) {
+    gBoardsDelayMs = 3000;
+    creds.value = Credentials{kGoodToken};
+    make();
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::Ready; }));
+    session->model()->start();
+    ASSERT_TRUE(settle([&] { return server->count("GET", "/1/members/me/boards") >= 1; }));
+    auto start = std::chrono::steady_clock::now();
+    session.reset();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 1500ms);
+    gBoardsDelayMs = 0;
 }

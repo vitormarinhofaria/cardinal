@@ -27,8 +27,11 @@ AppContext::AppContext(AppConfig config, UiDispatcher& ui) {
 
 AppContext::~AppContext() {
     modelRef_ = nullptr;
-    poller_->stop();  // no poll callback can still be running (or start) from here on
-    model_.reset();   // the engine unwatches through the poller, so the poller outlives the model
+    poller_->stop();      // no poll callback can still be running (or start) from here on
+    model_->quiesce();    // from now on nothing is reported to the UI
+    scheduler_->shutdown();  // queued requests fail at once...
+    http_->shutdown();       // ...and transfers in flight are aborted: no waiting on the network
+    model_.reset();       // jobs now end quickly; the engine unwatches through the poller
 }
 
 }  // namespace cardinal

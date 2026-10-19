@@ -183,3 +183,23 @@ TEST(Scheduler, DestructorWithPendingRequestsDoesNotHang) {
     }
     EXPECT_THROW(second.get(), std::future_error);  // broken promise: dropped at shutdown
 }
+
+TEST(Scheduler, ShutdownFailsQueuedRequestsAndRefusesNewOnes) {
+    FakeClock clock;
+    FakeHttp http;
+    Scheduler s(http, limit(1), clock, false);
+    auto first = s.submit(Priority::Visible, Method::Get, "a");
+    auto second = s.submit(Priority::Background, Method::Get, "b");
+    s.pump();  // "a" goes out, "b" waits for the window
+    s.shutdown();
+    EXPECT_TRUE(first.wait_for(0ms) == std::future_status::ready);  // answered before shutdown
+    ASSERT_EQ(second.wait_for(0ms), std::future_status::ready);
+    EXPECT_THROW(second.get(), std::runtime_error);
+
+    auto late = s.submit(Priority::Interactive, Method::Get, "c");
+    ASSERT_EQ(late.wait_for(0ms), std::future_status::ready);
+    EXPECT_THROW(late.get(), std::runtime_error);
+    clock.advance(10000ms);
+    s.pump();
+    EXPECT_EQ(http.calls.size(), 1u);  // nothing else was sent
+}

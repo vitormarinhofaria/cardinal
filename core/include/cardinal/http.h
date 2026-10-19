@@ -19,6 +19,8 @@ class HttpClient {
 public:
     virtual ~HttpClient() = default;
     virtual std::future<HttpResponse> request(Method method, std::string url, std::string body) = 0;
+    // Abort transfers in flight, fail everything queued and refuse new requests. Idempotent.
+    virtual void shutdown() {}
 };
 
 std::unique_ptr<HttpClient> makeCurlHttpClient(int workers = 4);

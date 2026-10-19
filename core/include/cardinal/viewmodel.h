@@ -271,6 +271,9 @@ public:
     void onNetworkOk();
     void onNetworkError(const SyncError& error);
 
+    // First step of tearing down: stop reporting to the UI. The destructor does the waiting.
+    void quiesce();
+
 private:
     std::shared_ptr<AppServices> services_;
     std::shared_ptr<BoardPickerVM> picker_;

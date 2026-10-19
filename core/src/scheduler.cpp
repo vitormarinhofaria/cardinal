@@ -30,11 +30,25 @@ std::future<HttpResponse> Scheduler::submit(Priority priority, Method method, st
     auto future = promise->get_future();
     {
         std::lock_guard lk(mutex_);
+        if (closing_) {
+            promise->set_exception(std::make_exception_ptr(std::runtime_error("scheduler: shutting down")));
+            return future;
+        }
         queues_[static_cast<int>(priority)].push_back(
             {method, std::move(url), std::move(body), std::move(promise), priority, 0, {}});
     }
     wake_.notify_all();
     return future;
+}
+
+void Scheduler::shutdown() {
+    std::lock_guard lk(mutex_);
+    closing_ = true;
+    for (auto& q : queues_) {
+        for (auto& p : q)
+            p.promise->set_exception(std::make_exception_ptr(std::runtime_error("scheduler: shutting down")));
+        q.clear();
+    }
 }
 
 std::optional<Clock::TimePoint> Scheduler::pump() {

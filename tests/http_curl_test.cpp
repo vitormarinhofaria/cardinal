@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "cardinal/http.h"
+#include "http_server.h"
 
 using namespace cardinal;
 using namespace std::chrono_literals;
@@ -153,4 +154,50 @@ TEST(CurlHttp, DestroyingClientWithQueuedRequestsDoesNotHang) {
     http.reset();
     // either completed or dropped; the test passes if reset() returned
     SUCCEED();
+}
+
+TEST(CurlHttp, DestroyingTheClientAbortsTransfersInFlightPromptly) {
+    cardinal::testing::RoutedServer slow([](const cardinal::testing::HttpRequestInfo&) {
+        std::this_thread::sleep_for(3s);
+        return cardinal::testing::HttpReply{200, "{}"};
+    });
+    std::future<HttpResponse> f;
+    auto start = std::chrono::steady_clock::now();
+    {
+        auto http = makeCurlHttpClient(1);
+        f = http->request(Method::Get, slow.url() + "/slow", "");
+        for (int i = 0; i < 200 && slow.requests().empty(); ++i) std::this_thread::sleep_for(5ms);
+        ASSERT_FALSE(slow.requests().empty());  // the transfer is really in flight
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 1500ms);
+    ASSERT_EQ(f.wait_for(0ms), std::future_status::ready);
+    EXPECT_THROW(f.get(), std::runtime_error);
+}
+
+TEST(CurlHttp, RequestsStillQueuedWhenShuttingDownFailInsteadOfRunning) {
+    cardinal::testing::RoutedServer slow([](const cardinal::testing::HttpRequestInfo&) {
+        std::this_thread::sleep_for(2s);
+        return cardinal::testing::HttpReply{200, "{}"};
+    });
+    std::future<HttpResponse> running, queued;
+    auto start = std::chrono::steady_clock::now();
+    {
+        auto http = makeCurlHttpClient(1);  // one worker: the second request waits in the queue
+        running = http->request(Method::Get, slow.url() + "/a", "");
+        queued = http->request(Method::Get, slow.url() + "/b", "");
+        for (int i = 0; i < 200 && slow.requests().empty(); ++i) std::this_thread::sleep_for(5ms);
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - start, 1500ms);
+    EXPECT_THROW(running.get(), std::runtime_error);
+    EXPECT_THROW(queued.get(), std::runtime_error);
+    EXPECT_EQ(slow.count("GET", "/b"), 0u);  // never sent
+}
+
+TEST(CurlHttp, ShutdownIsIdempotentAndLaterRequestsFail) {
+    auto http = makeCurlHttpClient(1);
+    http->shutdown();
+    http->shutdown();
+    auto f = http->request(Method::Get, "http://127.0.0.1:1/", "");
+    ASSERT_EQ(f.wait_for(2s), std::future_status::ready);
+    EXPECT_THROW(f.get(), std::runtime_error);
 }

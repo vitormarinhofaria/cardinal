@@ -146,8 +146,9 @@ void Session::signOut(SessionError why, bool clearCredentials) {
         context_->model().status().changed.disconnect(statusConnection_);
         // The UI drops its view-models while handling the state change below; the context itself
         // goes away on the next UI turn (we may be inside one of its own signals right now).
+        // Tearing it down joins worker threads: do that away from the UI thread.
         std::shared_ptr<AppContext> old(std::move(context_));
-        ui_.post([old, alive = alive_] { (void)alive; });
+        background([old = std::move(old)]() mutable { old.reset(); });
     }
     if (clearCredentials) {
         background([this] {

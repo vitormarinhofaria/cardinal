@@ -63,6 +63,10 @@ public:
     // again, or nullopt if idle until the next submit.
     std::optional<Clock::TimePoint> pump();
 
+    // Fail every queued request and refuse new ones. Requests already sent are left to HttpClient
+    // (see HttpClient::shutdown). Idempotent.
+    void shutdown();
+
 private:
     struct Pending {
         Method method;
@@ -93,6 +97,7 @@ private:
     std::list<InFlight> inFlight_;
     std::deque<Clock::TimePoint> sent_;  // dispatch times inside the trailing window
     bool stop_ = false;
+    bool closing_ = false;
     std::thread worker_;
 };
 
