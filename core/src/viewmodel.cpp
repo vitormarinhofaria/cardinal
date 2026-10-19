@@ -142,6 +142,22 @@ struct AppServices : std::enable_shared_from_this<AppServices> {
         });
     }
 
+    // Trello answered something: we are online. Coming back from offline means whatever was
+    // waiting (unsent writes, a board that failed to load) should go now, not on the next edit.
+    void networkOk() {
+        bool recovered = false;
+        updateStatus([&](AppStatus& s) {
+            recovered = s.offline;
+            s.offline = false;
+        });
+        if (recovered && !dead) {
+            postWork([this] {
+                if (queue) queue->flush();
+                if (engine) engine->refresh();
+            });
+        }
+    }
+
     void reportError(int code, const std::string& what) {
         updateStatus([&](AppStatus& s) {
             s.lastError = what;
@@ -187,7 +203,7 @@ struct AppServices : std::enable_shared_from_this<AppServices> {
         explicit EngineSink(AppServices& s) : svc(s) {}
         void onChanged(const ChangeSet& cs) override {
             if (svc.dead) return;
-            svc.updateStatus([](AppStatus& s) { s.offline = false; });  // the network answered
+            svc.networkOk();
             if (cs.boards) {
                 {
                     std::lock_guard lk(svc.mutex);
@@ -223,6 +239,9 @@ struct AppServices : std::enable_shared_from_this<AppServices> {
         }
         void onPendingChanged() override {
             if (!svc.dead) svc.updateStatus([](AppStatus&) {});
+        }
+        void onNetworkOk() override {
+            if (!svc.dead) svc.networkOk();
         }
         AppServices& svc;
     };
@@ -685,6 +704,10 @@ void AppModel::retry() {
     services_->queue->flush();
     services_->engine->start();
 }
+
+void AppModel::onNetworkOk() { services_->networkOk(); }
+
+void AppModel::onNetworkError(const SyncError& error) { services_->reportError(error.status, error.what); }
 
 void AppModel::loginCompleted() {
     services_->updateStatus([](AppStatus& s) { s.loginRequired = false; });

@@ -27,6 +27,10 @@ private:
     std::string body_;
 };
 
+// Trello answers 401 both for a bad token ("invalid token", "expired token") and for missing
+// permissions ("unauthorized ... permission requested").
+bool isInvalidToken(const ApiError& e);
+
 struct CardEdit {
     std::optional<std::string> name;
     std::optional<std::string> desc;

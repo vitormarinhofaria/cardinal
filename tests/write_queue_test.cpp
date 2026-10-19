@@ -32,6 +32,10 @@ struct RecordingWriteSink : WriteSink {
         std::lock_guard lk(mu);
         ++pendingEvents;
     }
+    void onNetworkOk() override {
+        std::lock_guard lk(mu);
+        ++networkOk;
+    }
     bool any(std::vector<std::string> ChangeSet::*field, const std::string& id) {
         std::lock_guard lk(mu);
         for (const auto& c : changes)
@@ -44,6 +48,7 @@ struct RecordingWriteSink : WriteSink {
     std::vector<Rejection> rejected;
     std::vector<Conflict> conflicts;
     int pendingEvents = 0;
+    int networkOk = 0;
 };
 
 constexpr const char* kCard1 = R"({"id":"c1","idList":"l1","name":"A","desc":"old desc","pos":10,
@@ -472,4 +477,87 @@ TEST_F(QueueTest, TransientFailureDoesNotReportPendingChange) {
     queue->enqueue(AddLabel{"c1", "lb1"});
     exec.drain();
     EXPECT_EQ(sink.pendingEvents, 1);  // only the enqueue; nothing left the queue
+}
+
+TEST_F(QueueTest, PermissionDenied401IsRejectedNotTreatedAsAnExpiredSession) {
+    route(Method::Post, "/cards/c1/idLabels", 401, "unauthorized card permission requested");
+    route(Method::Post, "/cards/c1/idMembers", 200, "[]");
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    queue->enqueue(AddMember{"c1", "m1"});
+    exec.drain();
+    ASSERT_EQ(sink.rejected.size(), 1u);
+    EXPECT_EQ(sink.rejected[0].status, 401);
+    EXPECT_TRUE(sink.errors.empty());  // no "log in again" signal
+    EXPECT_TRUE(store->card("c1")->labelIds.empty());  // reverted
+    EXPECT_EQ(sent(Method::Post, "/cards/c1/idMembers").size(), 1u);  // the queue went on
+}
+
+TEST_F(QueueTest, InvalidToken401KeepsTheWriteForAfterTheNextLogin) {
+    route(Method::Post, "/cards/c1/idLabels", 401, "invalid token");
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    exec.drain();
+    EXPECT_EQ(queue->pendingCount(), 1u);
+    ASSERT_EQ(sink.errors.size(), 1u);
+    EXPECT_EQ(sink.errors[0].status, 401);
+}
+
+TEST_F(QueueTest, ReportsTheNetworkAnsweredAfterEverySentWrite) {
+    route(Method::Post, "/cards/c1/idLabels", 200, "[]");
+    route(Method::Post, "/cards/c1/idMembers", 400, "bad");  // a refusal still proves connectivity
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    queue->enqueue(AddMember{"c1", "m1"});
+    exec.drain();
+    EXPECT_EQ(sink.networkOk, 2);
+}
+
+TEST_F(QueueTest, BlockedQueueRetriesByItselfAfterABackoff) {
+    opts.retryBase = std::chrono::milliseconds(20);
+    req.failAll = true;
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    exec.drain();
+    EXPECT_EQ(queue->pendingCount(), 1u);
+
+    req.failAll = false;
+    route(Method::Post, "/cards/c1/idLabels", 200, "[]");
+    for (int i = 0; i < 100 && queue->pendingCount() > 0; ++i) {  // no flush(), no new write
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        exec.drain();
+    }
+    EXPECT_EQ(queue->pendingCount(), 0u);
+    EXPECT_GE(sent(Method::Post, "/cards/c1/idLabels").size(), 2u);  // the failed try, then the real one
+}
+
+TEST_F(QueueTest, RetryBackoffGrowsWhileTheNetworkStaysDown) {
+    opts.retryBase = std::chrono::milliseconds(10);
+    opts.retryMax = std::chrono::milliseconds(1000);
+    req.failAll = true;
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    while (std::chrono::steady_clock::now() < end) {
+        exec.drain();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    // 10, 20, 40, 80, 160 ms ... : a handful of attempts, not one every 10 ms
+    EXPECT_GE(req.calls.size(), 3u);
+    EXPECT_LE(req.calls.size(), 8u);
+}
+
+TEST_F(QueueTest, DestroyingABlockedQueueStopsItsRetryTimerPromptly) {
+    opts.retryBase = std::chrono::milliseconds(20);
+    req.failAll = true;
+    make();
+    queue->enqueue(AddLabel{"c1", "lb1"});
+    exec.drain();
+    auto start = std::chrono::steady_clock::now();
+    queue.reset();
+    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(1));
+    size_t calls = req.calls.size();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    exec.drain();
+    EXPECT_EQ(req.calls.size(), calls);
 }

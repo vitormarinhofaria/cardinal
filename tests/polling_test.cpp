@@ -176,3 +176,27 @@ TEST_F(PollingTest, BackgroundThreadPollsPeriodicallyAndStopsOnDestruction) {
     std::this_thread::sleep_for(100ms);
     EXPECT_EQ(req.countPath("/boards/b1/actions"), after);  // destructor stopped the thread
 }
+
+TEST_F(PollingTest, ReportsSuccessAfterEveryAnsweredPollEvenWithNoActions) {
+    store->setSyncCursor("b1", "2026-10-19T12:00:00.000Z");
+    req.routes = {{"/boards/b1/actions", "", {200, "[]"}}};
+    int ok = 0;
+    opts.onSuccess = [&] { ++ok; };
+    PollingEventSource poller(api, *store, opts);
+    poller.watch("b1", [](std::vector<Action>) {});
+    poller.pollOnce();
+    poller.pollOnce();
+    EXPECT_EQ(ok, 2);
+}
+
+TEST_F(PollingTest, DoesNotReportSuccessWhenThePollFailed) {
+    store->setSyncCursor("b1", "2026-10-19T12:00:00.000Z");
+    req.failAll = true;
+    int ok = 0;
+    opts.onSuccess = [&] { ++ok; };
+    PollingEventSource poller(api, *store, opts);
+    poller.watch("b1", [](std::vector<Action>) {});
+    poller.pollOnce();
+    EXPECT_EQ(ok, 0);
+    EXPECT_EQ(errors.size(), 1u);
+}

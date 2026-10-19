@@ -264,6 +264,10 @@ public:
     void retry();           // try again now: pending writes and the board list
     void loginCompleted();  // a new token is in place
 
+    // Connectivity evidence from outside the sync engine (the live-update poll). Thread-safe.
+    void onNetworkOk();
+    void onNetworkError(const SyncError& error);
+
 private:
     std::shared_ptr<AppServices> services_;
     std::shared_ptr<BoardPickerVM> picker_;

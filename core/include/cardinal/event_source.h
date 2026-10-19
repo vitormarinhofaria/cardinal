@@ -31,6 +31,7 @@ struct PollingOptions {
     std::chrono::milliseconds interval{20000};
     std::function<std::string()> nowIso = [] { return isoNow(); };
     std::function<void(const std::exception&)> onError;  // called on the polling thread
+    std::function<void()> onSuccess;                     // a poll was answered, with or without news
     bool autoStart = true;                               // false: tests call pollOnce()
 
     static std::string isoNow();
@@ -48,9 +49,11 @@ public:
     void unwatch(const std::string& boardId) override;
 
     void pollOnce();
+    // Stops the polling thread (and with it every callback); the object stays usable for unwatch().
+    void stop();
 
 private:
-    void pollBoard(const std::string& boardId, const Handler& handler);
+    bool pollBoard(const std::string& boardId, const Handler& handler);  // true: Trello answered
     void run();
 
     TrelloApi& api_;

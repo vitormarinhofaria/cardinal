@@ -34,8 +34,8 @@ struct ThreadSafeUi : UiDispatcher {
 HttpReply fakeTrello(const HttpRequestInfo& r) {
     const std::string& p = r.path;
     auto has = [&](const char* s) { return r.query.find(s) != std::string::npos; };
-    if (r.query.find("key=KEY") == std::string::npos || r.query.find("token=TOKEN") == std::string::npos)
-        return {401, "invalid key"};
+    if (r.query.find("key=KEY") == std::string::npos) return {401, "invalid key"};
+    if (r.query.find("token=TOKEN") == std::string::npos) return {401, "invalid token"};
     if (p == "/1/members/me/boards") return {200, R"([{"id":"b1","name":"Produto","closed":false}])"};
     if (p == "/1/boards/b1/lists")
         return {200, R"([{"id":"l1","name":"A fazer","pos":1,"cards":[{"id":"c1"}]},

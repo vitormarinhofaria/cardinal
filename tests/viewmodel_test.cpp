@@ -604,3 +604,63 @@ TEST_F(VmTest, RealThreadsLoadBoardAndPanelAndSendEditsWithoutRaces) {
     }  // AppModel destroyed while the pool keeps running
     tsUi.runAll();
 }
+
+TEST_F(VmTest, NetworkComingBackSendsPendingWritesAndClearsOfflineWithoutAnyUserAction) {
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    req.failAll = true;
+    auto panel = app->openCard("c1");
+    panel->addLabel("lb2");
+    pump();
+    ASSERT_TRUE(app->status().get().offline);
+    ASSERT_EQ(app->status().get().pendingWrites, 1);
+
+    req.failAll = false;
+    routeFirst(Method::Post, "/cards/c1/idLabels", 200, "[]");
+    app->onNetworkOk();  // e.g. the live-update poll got an answer
+    pump();
+    EXPECT_FALSE(app->status().get().offline);
+    EXPECT_EQ(app->status().get().pendingWrites, 0);
+    EXPECT_GE(sent(Method::Post, "/cards/c1/idLabels").size(), 2u);  // the failed try, then the real one
+}
+
+TEST_F(VmTest, NetworkComingBackAlsoReloadsTheBoardThatCouldNotLoad) {
+    req.failAll = true;
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    EXPECT_TRUE(board->columns().empty());
+    req.failAll = false;
+    app->onNetworkOk();
+    pump();
+    EXPECT_EQ(board->columns().size(), 3u);
+}
+
+TEST_F(VmTest, PollErrorsAreReportedAsOfflineOrLoginRequired) {
+    make();
+    app->onNetworkError({0, "no route to host"});
+    pump();
+    EXPECT_TRUE(app->status().get().offline);
+    app->onNetworkOk();
+    pump();
+    EXPECT_FALSE(app->status().get().offline);
+    app->onNetworkError({401, "invalid token"});
+    pump();
+    EXPECT_TRUE(app->status().get().loginRequired);
+}
+
+TEST_F(VmTest, ConfirmedWriteProvesTheNetworkIsBack) {
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    app->onNetworkError({0, "offline"});
+    pump();
+    ASSERT_TRUE(app->status().get().offline);
+    routeFirst(Method::Post, "/cards/c1/idLabels", 200, "[]");
+    auto panel = app->openCard("c1");
+    pump();
+    panel->addLabel("lb2");
+    pump();
+    EXPECT_FALSE(app->status().get().offline);
+}

@@ -11,6 +11,15 @@
 
 namespace cardinal {
 
+SyncError describe(const std::exception& e) {
+    if (const auto* api = dynamic_cast<const ApiError*>(&e)) {
+        int status = api->status();
+        if (status == 401 && !isInvalidToken(*api)) status = 403;  // a permission, not a session
+        return {status, e.what()};
+    }
+    return {0, e.what()};
+}
+
 struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
     Impl(TrelloApi& a, Store& s, Executor& e, ChangeSink& k, SyncOptions o, EventSource* ev)
         : api(a), store(s), exec(e), sink(k), opts(std::move(o)), events(ev) {}
@@ -43,10 +52,8 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         }
         try {
             job();
-        } catch (const ApiError& e) {
-            sink.onError({e.status(), e.what()});
         } catch (const std::exception& e) {
-            sink.onError({0, e.what()});
+            sink.onError(describe(e));
         }
         std::lock_guard lk(mutex);
         --running;
@@ -86,8 +93,10 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
     // `fresh`: the user just opened the board, so live updates start from now. Otherwise this is a
     // refresh triggered by an event and the cursor must stay where the poller put it.
     void loadBoard(const std::string& boardId, bool fresh) {
+        // Events that happen while the snapshot is being fetched are replayed (harmlessly) because
+        // the cursor is the time we started, and it only moves once the snapshot arrived.
+        const std::string startedAt = isoUtc(opts.now());
         if (fresh && events) {
-            store.setSyncCursor(boardId, isoUtc(opts.now()));
             events->watch(boardId, [weak = std::weak_ptr<Impl>(shared_from_this()),
                                     boardId](std::vector<Action> actions) {
                 if (auto self = weak.lock()) self->applyActions(boardId, actions);
@@ -97,6 +106,7 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         auto snap = api.board(boardId, Priority::Visible).get();
         std::vector<std::string> listIds;
         for (const auto& l : snap.lists) listIds.push_back(l.id);
+        if (fresh && events) store.setSyncCursor(boardId, startedAt);
         store.upsertBoards(std::vector<Board>{snap.board});
         store.upsertLists(snap.lists);
         store.pruneBoardLists(boardId, listIds);
@@ -319,6 +329,18 @@ void SyncEngine::openBoard(const std::string& id) {
     }
     if (impl_->events && !previous.empty() && previous != id) impl_->events->unwatch(previous);
     impl_->post([p = impl_.get(), id] { p->loadBoard(id, true); });
+}
+
+void SyncEngine::refresh() {
+    impl_->post([p = impl_.get()] {
+        p->loadBoards();
+        std::string board;
+        {
+            std::lock_guard lk(p->mutex);
+            board = p->currentBoard;
+        }
+        if (!board.empty()) p->loadBoard(board, true);
+    });
 }
 
 void SyncEngine::openCard(const std::string& id) {

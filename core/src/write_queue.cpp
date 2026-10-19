@@ -5,6 +5,7 @@
 #include <deque>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <random>
 
 #include "cardinal/time_util.h"
@@ -38,7 +39,8 @@ Error classify(const std::exception_ptr& ep) {
         std::rethrow_exception(ep);
     } catch (const ApiError& e) {
         int s = e.status();
-        if (s == 401 || s == 408 || s == 429 || s >= 500) return {Failure::Transient, s, e.what()};
+        // A rejected token waits for the next login; any other 401 is a permission: refuse it.
+        if (isInvalidToken(e) || s == 408 || s == 429 || s >= 500) return {Failure::Transient, s, e.what()};
         if (s == 404) return {Failure::Gone, s, e.what()};
         return {Failure::Permanent, s, e.what() + std::string(": ") + e.body()};
     } catch (const std::exception& e) {
@@ -66,6 +68,53 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
     bool retryRequested = false;  // a retry was requested while an attempt was running
     bool closed = false;
     int running = 0;
+
+    // Retry timer: after a transient failure the queue retries by itself, doubling the wait.
+    std::mutex timerMu;
+    std::condition_variable timerCv;
+    bool timerStop = false;
+    std::optional<std::chrono::steady_clock::time_point> retryAt;
+    int failures = 0;
+
+    void scheduleRetry() {
+        std::lock_guard lk(timerMu);
+        const int shift = std::min(failures, 20);
+        ++failures;
+        const auto delay = std::min<std::chrono::milliseconds>(opts.retryMax, opts.retryBase * (1LL << shift));
+        retryAt = std::chrono::steady_clock::now() + delay;
+        timerCv.notify_all();
+    }
+
+    void clearRetry() {
+        std::lock_guard lk(timerMu);
+        failures = 0;
+        retryAt.reset();
+    }
+
+    void stopTimer() {
+        std::lock_guard lk(timerMu);
+        timerStop = true;
+        timerCv.notify_all();
+    }
+
+    void timerLoop() {
+        std::unique_lock lk(timerMu);
+        while (!timerStop) {
+            if (!retryAt) {
+                timerCv.wait(lk);
+                continue;
+            }
+            const auto when = *retryAt;
+            timerCv.wait_until(lk, when);
+            if (timerStop) break;
+            if (retryAt && std::chrono::steady_clock::now() >= *retryAt) {
+                retryAt.reset();
+                lk.unlock();
+                retry();
+                lk.lock();
+            }
+        }
+    }
 
     std::mutex cacheMu;  // serializes read-modify-write of cache rows (taken before `mutex`)
     std::mutex rngMu;
@@ -309,9 +358,12 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
                     processing = false;
                     blocked = !retryRequested;
                 }
-                sink.onError({failure->status, failure->what});
+                scheduleRetry();
+                sink.onError({failure->status == 401 ? 401 : failure->status, failure->what});
                 return;
             }
+            clearRetry();
+            sink.onNetworkOk();  // Trello answered, even if it said no
             if (failure) reject(op, *failure);
             store.removePendingOp(op.id);
             {
@@ -439,9 +491,14 @@ WriteQueue::WriteQueue(TrelloApi& api, Store& store, Executor& executor, WriteSi
     : impl_(std::make_shared<Impl>(api, store, executor, sink, std::move(options))) {
     for (auto& op : store.pendingOps()) impl_->pending.push_back(std::move(op));
     if (!impl_->pending.empty()) impl_->post([p = impl_.get()] { p->process(); });
+    timer_ = std::thread([p = impl_.get()] { p->timerLoop(); });
 }
 
-WriteQueue::~WriteQueue() { impl_->shutdown(); }
+WriteQueue::~WriteQueue() {
+    impl_->stopTimer();
+    if (timer_.joinable()) timer_.join();
+    impl_->shutdown();
+}
 
 Enqueued WriteQueue::enqueue(const Op& op) { return impl_->enqueue(op); }
 

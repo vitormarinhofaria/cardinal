@@ -11,7 +11,9 @@ PollingEventSource::PollingEventSource(TrelloApi& api, Store& store, PollingOpti
     if (options_.autoStart) thread_ = std::thread([this] { run(); });
 }
 
-PollingEventSource::~PollingEventSource() {
+PollingEventSource::~PollingEventSource() { stop(); }
+
+void PollingEventSource::stop() {
     {
         std::lock_guard lk(mutex_);
         stop_ = true;
@@ -38,27 +40,28 @@ void PollingEventSource::pollOnce() {
     }
     for (const auto& [boardId, handler] : snapshot) {
         try {
-            pollBoard(boardId, handler);
+            if (pollBoard(boardId, handler) && options_.onSuccess) options_.onSuccess();
         } catch (const std::exception& e) {
             if (options_.onError) options_.onError(e);
         }
     }
 }
 
-void PollingEventSource::pollBoard(const std::string& boardId, const Handler& handler) {
+bool PollingEventSource::pollBoard(const std::string& boardId, const Handler& handler) {
     auto cursor = store_.syncCursor(boardId);
     if (!cursor) {
         store_.setSyncCursor(boardId, options_.nowIso());  // nothing to diff against yet
-        return;
+        return false;                                       // and no network evidence either
     }
     auto actions = api_.actionsSince(boardId, *cursor).get();
-    if (actions.empty()) return;
+    if (actions.empty()) return true;
 
     std::stable_sort(actions.begin(), actions.end(),
                      [](const Action& a, const Action& b) { return a.date < b.date; });
     const std::string newest = actions.back().date;
     handler(std::move(actions));  // throws => cursor stays, batch comes again
     store_.setSyncCursor(boardId, newest);
+    return true;
 }
 
 void PollingEventSource::run() {

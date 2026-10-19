@@ -65,6 +65,13 @@ auto then(std::future<HttpResponse> response, Fn fn) {
 
 }  // namespace
 
+bool isInvalidToken(const ApiError& e) {
+    if (e.status() != 401) return false;
+    std::string body = e.body();
+    for (auto& c : body) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return body.find("invalid token") != std::string::npos || body.find("expired token") != std::string::npos;
+}
+
 std::string urlEncode(std::string_view s) {
     static constexpr char kHex[] = "0123456789ABCDEF";
     std::string out;

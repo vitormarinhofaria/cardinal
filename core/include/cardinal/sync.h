@@ -34,6 +34,11 @@ struct SyncError {
     std::string what;
 };
 
+// Maps an exception from the API layer to what the app reacts to. Only a rejected token is a 401
+// the app treats as "sign in again"; Trello also answers 401 for missing permissions, which is
+// reported as 403 so a card the user cannot touch never logs them out.
+SyncError describe(const std::exception& e);
+
 class ChangeSink {
 public:
     virtual ~ChangeSink() = default;
@@ -63,6 +68,7 @@ public:
     void openBoard(const std::string& id);  // lists, then hot lists' cards, then cold prefetch
     void openCard(const std::string& id);   // description + comments first, extras after
     void expandList(const std::string& id); // load a cold list now
+    void refresh();                         // reload the board list and the open board (connectivity came back)
 
     std::vector<Board> boards();
     std::vector<List> lists(const std::string& boardId);

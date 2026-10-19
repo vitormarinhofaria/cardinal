@@ -1,11 +1,13 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <variant>
 
 #include "cardinal/executor.h"
@@ -71,11 +73,16 @@ public:
     virtual void onConflict(const Conflict& conflict) = 0;
     // The number of unconfirmed writes changed (one more, or one fewer). See pendingCount().
     virtual void onPendingChanged() {}
+    // Trello answered a write (accepted or refused): the network is reachable.
+    virtual void onNetworkOk() {}
 };
 
 struct WriteOptions {
     std::string selfMemberId;  // author shown on optimistic comments
     std::function<std::time_t()> now = [] { return std::time(nullptr); };
+    // After a transient failure the queue retries by itself: retryBase, then doubling up to retryMax.
+    std::chrono::milliseconds retryBase{2000};
+    std::chrono::milliseconds retryMax{60000};
 };
 
 // Applies the user's writes to the cache at once and sends them to Trello in order, in the
@@ -99,6 +106,7 @@ public:
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;
+    std::thread timer_;  // wakes a blocked queue after a backoff; joined before impl_ goes
 };
 
 }  // namespace cardinal

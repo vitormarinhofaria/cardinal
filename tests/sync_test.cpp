@@ -595,3 +595,62 @@ TEST_F(SyncTest, OpenBoardCachesTheBoardItselfEvenIfTheBoardListWasNeverLoaded) 
     ASSERT_EQ(engine->boards().size(), 1u);
     EXPECT_EQ(engine->boards()[0].name, "Produto");
 }
+
+// ---- review fixes: reconnecting, cursor, 401 vs permissions ----
+
+TEST_F(SyncTest, FailedBoardSnapshotLeavesThePollCursorWhereItWas) {
+    store->setSyncCursor("b1", "2026-10-01T00:00:00.000Z");
+    req.failAll = true;
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    EXPECT_EQ(store->syncCursor("b1"), "2026-10-01T00:00:00.000Z");  // missed events stay reachable
+    EXPECT_FALSE(sink.errors.empty());
+}
+
+TEST_F(SyncTest, SuccessfulSnapshotMovesTheCursorToWhenItStarted) {
+    now = 1'760'875'500;
+    store->setSyncCursor("b1", "2026-10-01T00:00:00.000Z");
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    EXPECT_EQ(store->syncCursor("b1"), "2025-10-19T12:05:00.000Z");
+}
+
+TEST_F(SyncTest, RefreshReloadsTheBoardListAndTheCurrentBoard) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    size_t boards = callsTo("/members/me/boards").size();
+    size_t lists = callsTo("/boards/b1/lists").size();
+    engine->refresh();
+    exec.drain();
+    EXPECT_EQ(callsTo("/members/me/boards").size(), boards + 1);
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), lists + 1);
+}
+
+TEST_F(SyncTest, RefreshWithoutAnOpenBoardOnlyReloadsTheBoardList) {
+    makeEngine();
+    engine->refresh();
+    exec.drain();
+    EXPECT_EQ(callsTo("/members/me/boards").size(), 1u);
+    EXPECT_TRUE(callsTo("/boards/b1/lists").empty());
+}
+
+TEST_F(SyncTest, PermissionDenied401IsNotReportedAsAnExpiredSession) {
+    req.routes = {{"/members/me/boards", "", {401, "unauthorized permission requested"}}};
+    makeEngine();
+    engine->start();
+    exec.drain();
+    ASSERT_EQ(sink.errors.size(), 1u);
+    EXPECT_EQ(sink.errors[0].status, 403);
+}
+
+TEST_F(SyncTest, ExpiredToken401IsStillReportedAs401) {
+    req.routes = {{"/members/me/boards", "", {401, "expired token"}}};
+    makeEngine();
+    engine->start();
+    exec.drain();
+    ASSERT_EQ(sink.errors.size(), 1u);
+    EXPECT_EQ(sink.errors[0].status, 401);
+}

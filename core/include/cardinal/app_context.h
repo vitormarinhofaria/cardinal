@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -51,6 +52,7 @@ private:
     std::unique_ptr<ThreadPoolExecutor> pool_;
     std::unique_ptr<PollingEventSource> poller_;
     std::unique_ptr<AppModel> model_;
+    std::atomic<AppModel*> modelRef_{nullptr};  // for the poll thread's callbacks
 };
 
 }  // namespace cardinal
