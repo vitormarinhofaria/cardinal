@@ -50,6 +50,7 @@ private:
     GtkWidget* boardPopover_;
     GtkWidget* offlineBanner_;
     GtkWidget* syncIcon_;
+    GtkWidget* sendingSpinner_;
     GtkWidget* split_;
     GtkWidget* content_;  // holds the board, or a loading page
     GtkWidget* sidebarHolder_;

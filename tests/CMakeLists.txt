@@ -7,3 +7,8 @@ target_compile_definitions(core_tests PRIVATE FIXTURE_DIR="${CMAKE_CURRENT_SOURC
 
 include(GoogleTest)
 gtest_discover_tests(core_tests)
+
+# Latency numbers on a 2000-card board; run by hand (see docs/performance.md).
+add_executable(core_bench EXCLUDE_FROM_ALL bench/core_bench.cpp)
+target_link_libraries(core_bench PRIVATE cardinal_core)
+target_include_directories(core_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

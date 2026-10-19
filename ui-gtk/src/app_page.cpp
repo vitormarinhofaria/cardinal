@@ -48,6 +48,10 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
     addClass(syncIcon_, "status-offline");
     gtk_widget_set_visible(syncIcon_, FALSE);
     adw_header_bar_pack_start(ADW_HEADER_BAR(header), syncIcon_);
+    sendingSpinner_ = gtk_spinner_new();
+    gtk_widget_set_tooltip_text(sendingSpinner_, "Enviando alterações ao Trello…");
+    gtk_widget_set_visible(sendingSpinner_, FALSE);
+    adw_header_bar_pack_start(ADW_HEADER_BAR(header), sendingSpinner_);
 
     GtkWidget* menuButton = gtk_menu_button_new();
     gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menuButton), "open-menu-symbolic");
@@ -100,6 +104,14 @@ AppPage::~AppPage() {
 void AppPage::onStatusChanged(const AppStatus& s) {
     adw_banner_set_revealed(ADW_BANNER(offlineBanner_), s.offline);
     gtk_widget_set_visible(syncIcon_, s.offline);
+    if (s.pendingWrites > 0) {
+        std::string tip = std::to_string(s.pendingWrites) + (s.offline ? " alteração(ões) aguardando a conexão"
+                                                                     : " alteração(ões) sendo enviadas…");
+        gtk_widget_set_tooltip_text(s.offline ? syncIcon_ : sendingSpinner_, tip.c_str());
+    }
+    const bool sending = s.pendingWrites > 0 && !s.offline;
+    gtk_widget_set_visible(sendingSpinner_, sending);
+    gtk_spinner_set_spinning(GTK_SPINNER(sendingSpinner_), sending);
 }
 
 void AppPage::onPickerChanged(const BoardPickerState& state) {
