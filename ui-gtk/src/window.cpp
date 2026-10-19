@@ -1,0 +1,94 @@
+#include "window.h"
+
+namespace cardinal::gtk {
+
+MainWindow::MainWindow(AdwApplication* app, Session& session, std::string dataDir,
+                       std::string openCardOnStart)
+    : session_(session), dataDir_(std::move(dataDir)), openCardOnStart_(std::move(openCardOnStart)) {
+    window_ = adw_application_window_new(GTK_APPLICATION(app));
+    gtk_window_set_title(GTK_WINDOW(window_), "Cardinal");
+    gtk_window_set_default_size(GTK_WINDOW(window_), 1280, 800);
+
+    stack_ = gtk_stack_new();
+    gtk_stack_set_transition_type(GTK_STACK(stack_), GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+
+    GtkWidget* starting = adw_status_page_new();
+    GtkWidget* spinner = gtk_spinner_new();
+    gtk_spinner_start(GTK_SPINNER(spinner));
+    gtk_widget_set_size_request(spinner, 32, 32);
+    adw_status_page_set_child(ADW_STATUS_PAGE(starting), spinner);
+    adw_status_page_set_title(ADW_STATUS_PAGE(starting), "Cardinal");
+    gtk_stack_add_named(GTK_STACK(stack_), starting, "starting");
+
+    login_ = std::make_unique<LoginPage>(session_);
+    GtkWidget* loginToolbar = adw_toolbar_view_new();
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(loginToolbar), adw_header_bar_new());
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(loginToolbar), login_->widget());
+    gtk_stack_add_named(GTK_STACK(stack_), loginToolbar, "login");
+
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window_), stack_);
+
+    // CARDINAL_TRACE: every finished frame with the page it shows, to see real paint times.
+    gtk_widget_add_tick_callback(
+        window_,
+        [](GtkWidget*, GdkFrameClock* clock, gpointer data) -> gboolean {
+            static const bool on = g_getenv("CARDINAL_TRACE_FRAMES") != nullptr;
+            static int n = 0;
+            if (!on) return G_SOURCE_REMOVE;
+            static bool phases = false;
+            if (!phases) {
+                phases = true;
+                for (const char* sig : {"update", "layout", "paint", "after-paint"})
+                    g_signal_connect_data(
+                        clock, sig,
+                        G_CALLBACK(+[](GdkFrameClock*, gpointer d) { trace(std::string("   phase ") + static_cast<const char*>(d)); }),
+                        const_cast<char*>(sig), nullptr, G_CONNECT_DEFAULT);
+            }
+            auto* stack = GTK_STACK(data);
+            const char* page = gtk_stack_get_visible_child_name(stack);
+            trace("frame " + std::to_string(++n) + " page=" + (page ? page : "?") +
+                  " frame-time-ms=" + std::to_string(gdk_frame_clock_get_frame_time(clock) / 1000 % 100000));
+            return n < 40 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+        },
+        stack_, nullptr);
+
+    connection_ = session_.state().changed.connect([this](const SessionState& s) { onSessionChanged(s); });
+    onSessionChanged(session_.state().get());
+}
+
+MainWindow::~MainWindow() {
+    session_.state().changed.disconnect(connection_);
+    app_.reset();
+}
+
+void MainWindow::onSessionChanged(const SessionState& state) {
+    using Phase = SessionState::Phase;
+    if (state.phase != Phase::Ready && app_) {
+        // Drop every view-model right away; the session destroys the backend on its next turn.
+        gtk_stack_set_visible_child_name(GTK_STACK(stack_), "login");
+        GtkWidget* old = app_->widget();
+        app_.reset();
+        gtk_stack_remove(GTK_STACK(stack_), old);
+    }
+    switch (state.phase) {
+        case Phase::Starting:
+            gtk_stack_set_visible_child_name(GTK_STACK(stack_), "starting");
+            break;
+        case Phase::SignedOut:
+        case Phase::WaitingForBrowser:
+            login_->update(state);
+            gtk_stack_set_visible_child_name(GTK_STACK(stack_), "login");
+            break;
+        case Phase::Ready:
+            if (!app_ && session_.model()) {
+                trace("session ready");
+                app_ = std::make_unique<AppPage>(*session_.model(), dataDir_,
+                                                 [this] { session_.logout(); }, openCardOnStart_);
+                gtk_stack_add_named(GTK_STACK(stack_), app_->widget(), "app");
+                gtk_stack_set_visible_child_name(GTK_STACK(stack_), "app");
+            }
+            break;
+    }
+}
+
+}  // namespace cardinal::gtk
