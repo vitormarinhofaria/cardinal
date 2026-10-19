@@ -23,6 +23,10 @@ public:
 
     // Called by GTK callbacks.
     void openCard(const std::string& cardId) { onOpenCard_(cardId); }
+    // Opening the side panel narrows the board and GTK clamps its scroll position; remember it
+    // on open and put it back (while the panel animates away) on close.
+    void saveScroll();
+    void restoreScroll();
     void dropCard(const std::string& cardId, const std::string& toListId, int index);
 
 private:
@@ -41,6 +45,10 @@ private:
     std::map<std::string, Column*> columns_;  // raw: each Column dies with its root widget
     std::vector<std::string> order_;
     bool visibilityDirty_ = false;
+    bool scrollSaved_ = false;
+    bool restoring_ = false;
+    bool applying_ = false;
+    double savedScroll_ = 0;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 

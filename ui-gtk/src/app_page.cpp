@@ -209,6 +209,7 @@ void AppPage::openBoard(const std::string& boardId) {
 
 void AppPage::openCard(const std::string& cardId) {
     trace("panel: open requested");
+    if (board_) board_->saveScroll();
     auto vm = model_.openCard(cardId);
     panel_ = std::make_unique<CardPanel>(vm, [this] { closeCard(); });
     adw_overlay_split_view_set_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), panel_->widget());
@@ -226,6 +227,7 @@ void AppPage::openCard(const std::string& cardId) {
 }
 
 void AppPage::closeCard() {
+    if (board_) board_->restoreScroll();
     adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), FALSE);
     if (!panel_) return;
     // May be called from the panel's own button: free it once the handler has returned.

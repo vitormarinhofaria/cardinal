@@ -211,11 +211,50 @@ BoardView::BoardView(std::shared_ptr<BoardVM> vm, std::function<void(const std::
     addClass(root_, "board-area");
 
     GtkAdjustment* h = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_));
-    on(h, "value-changed", [this] { markVisibilityDirty(); });
-    on(h, "changed", [this] { markVisibilityDirty(); });  // page size or width changed
+    on(h, "value-changed", [this] {
+        // While the panel animates away, undo any reset right where it happens, before a frame is drawn.
+        if (restoring_ && !applying_) {
+            GtkAdjustment* a = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_));
+            if (gtk_adjustment_get_value(a) != savedScroll_) {
+                applying_ = true;
+                gtk_adjustment_set_value(a, savedScroll_);
+                applying_ = false;
+            }
+        }
+        markVisibilityDirty();
+    });
+    on(h, "changed", [this] {  // page size or width changed
+        if (restoring_) {
+            GtkAdjustment* a = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_));
+            gtk_adjustment_set_value(a, savedScroll_);
+        }
+        markVisibilityDirty();
+    });
     structureConn_ = vm_->structureChanged.connect([this] { rebuildStructure(); });
     columnConn_ = vm_->columnChanged.connect([this](const std::string& id) { updateColumn(id); });
     rebuildStructure();
+}
+
+void BoardView::saveScroll() {
+    if (scrollSaved_) return;  // a second card opened while the panel is already showing
+    scrollSaved_ = true;
+    restoring_ = false;
+    savedScroll_ = gtk_adjustment_get_value(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_)));
+}
+
+void BoardView::restoreScroll() {
+    if (!scrollSaved_) return;
+    scrollSaved_ = false;
+    restoring_ = true;
+    gtk_adjustment_set_value(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_)), savedScroll_);
+    // The sidebar animation keeps widening the board; keep re-applying until it has settled.
+    auto alive = alive_;
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 600, [](gpointer d) -> gboolean {
+        auto* a = static_cast<std::pair<BoardView*, std::shared_ptr<bool>>*>(d);
+        if (*a->second) a->first->restoring_ = false;
+        delete a;
+        return G_SOURCE_REMOVE;
+    }, new std::pair<BoardView*, std::shared_ptr<bool>>(this, alive), nullptr);
 }
 
 BoardView::~BoardView() {
