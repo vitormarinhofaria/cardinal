@@ -7,6 +7,7 @@ pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
 add_library(cardinal_core STATIC
   src/version.cpp
   src/model_json.cpp
+  src/store.cpp
 )
 target_include_directories(cardinal_core PUBLIC include)
 target_link_libraries(cardinal_core PUBLIC
