@@ -20,7 +20,15 @@ App::App() {
 }
 
 void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e) {
+    shell_ = std::make_unique<cardinal::win::Shell>(cardinal::win::parseCommandLine());
     window_ = make<MainWindow>();
+    auto* impl = get_self<MainWindow>(window_.as<Cardinal::MainWindow>());
+    impl->attach(*shell_);
+    window_.Closed([this](auto&&, auto&&) {
+        // Pages and view-models first, then the Session that owns the model.
+        get_self<MainWindow>(window_.as<Cardinal::MainWindow>())->detach();
+        shell_.reset();
+    });
     window_.Activate();
 }
 

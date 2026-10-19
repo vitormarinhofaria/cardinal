@@ -13,10 +13,6 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
-        <TextBlock x:Name="versionText"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Style="{StaticResource TitleTextBlockStyle}" />
-    </Grid>
+    <!-- Pages are built in code (see MainWindow.xaml.cpp) and swapped in here. -->
+    <Grid x:Name="host" />
 </Window>
