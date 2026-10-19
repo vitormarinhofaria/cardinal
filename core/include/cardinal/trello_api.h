@@ -48,6 +48,7 @@ public:
     std::future<std::vector<Card>> listCards(const std::string& listId, Priority priority);
     std::future<CardCore> cardCore(const std::string& cardId);
     std::future<CardExtras> cardExtras(const std::string& cardId);
+    std::future<CardFields> cardFields(const std::string& cardId);
     std::future<std::vector<Action>> actionsSince(const std::string& boardId,
                                                   const std::string& iso);
 

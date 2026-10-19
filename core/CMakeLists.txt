@@ -13,6 +13,7 @@ add_library(cardinal_core STATIC
   src/trello_api.cpp
   src/executor.cpp
   src/sync.cpp
+  src/write_queue.cpp
   src/polling_event_source.cpp
   src/time_util.cpp
 )

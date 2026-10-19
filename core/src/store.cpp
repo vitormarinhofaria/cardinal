@@ -501,3 +501,45 @@ std::vector<Comment> Store::comments(const std::string& cardId) {
 }
 
 }  // namespace cardinal
+
+namespace cardinal {
+
+std::int64_t Store::addPendingOp(const std::string& kind, const std::string& cardId,
+                                 const std::string& payload, std::time_t createdAt) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "INSERT INTO pending_ops(kind, card_id, payload, created_at) VALUES(?,?,?,?)");
+    s.text(1, kind);
+    s.text(2, cardId);
+    s.text(3, payload);
+    s.integer(4, static_cast<sqlite3_int64>(createdAt));
+    s.run();
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<PendingOp> Store::pendingOps() {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "SELECT id, kind, card_id, payload, created_at FROM pending_ops ORDER BY id");
+    std::vector<PendingOp> out;
+    while (s.step())
+        out.push_back({s.col_int64(0), s.col_text(1), s.col_text(2), s.col_text(3),
+                       static_cast<std::time_t>(s.col_int64(4))});
+    return out;
+}
+
+void Store::updatePendingOp(std::int64_t id, const std::string& cardId, const std::string& payload) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "UPDATE pending_ops SET card_id = ?, payload = ? WHERE id = ?");
+    s.text(1, cardId);
+    s.text(2, payload);
+    s.integer(3, id);
+    s.run();
+}
+
+void Store::removePendingOp(std::int64_t id) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, "DELETE FROM pending_ops WHERE id = ?");
+    s.integer(1, id);
+    s.run();
+}
+
+}  // namespace cardinal

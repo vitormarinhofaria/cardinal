@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cardinal/event_source.h"
@@ -25,6 +26,7 @@ struct ChangeSet {
     std::vector<std::string> cardDetails;   // cards whose description or comments changed
     std::vector<std::string> cardExtras;    // cards whose checklists/attachments/members loaded
     std::vector<std::string> removedCards;  // cards deleted or archived remotely
+    std::vector<std::pair<std::string, std::string>> renamedCards;  // temporary id -> real id
 };
 
 struct SyncError {

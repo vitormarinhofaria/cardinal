@@ -284,3 +284,31 @@ TEST_F(StoreTest, ConcurrentWritersAndReadersDoNotCorruptData) {
     for (auto& th : threads) th.join();
     for (int t = 0; t < 4; ++t) EXPECT_EQ(s.cards("l" + std::to_string(t)).size(), 50u);
 }
+
+TEST_F(StoreTest, PendingOpsAreOrderedPersistedAndRemovable) {
+    std::int64_t a, b;
+    {
+        Store s = Store::open(path_);
+        EXPECT_TRUE(s.pendingOps().empty());
+        a = s.addPendingOp("move", "c1", R"({"toListId":"l2"})", 100);
+        b = s.addPendingOp("comment", "c1", R"({"text":"olá 👋"})", 101);
+        EXPECT_LT(a, b);
+    }
+    Store s = Store::open(path_);
+    auto ops = s.pendingOps();
+    ASSERT_EQ(ops.size(), 2u);
+    EXPECT_EQ(ops[0].id, a);
+    EXPECT_EQ(ops[0].kind, "move");
+    EXPECT_EQ(ops[0].cardId, "c1");
+    EXPECT_EQ(ops[1].payload, R"({"text":"olá 👋"})");
+    EXPECT_EQ(ops[1].createdAt, std::time_t{101});
+
+    s.updatePendingOp(a, "c9", R"({"toListId":"l3"})");
+    EXPECT_EQ(s.pendingOps()[0].cardId, "c9");
+    EXPECT_EQ(s.pendingOps()[0].payload, R"({"toListId":"l3"})");
+
+    s.removePendingOp(a);
+    ASSERT_EQ(s.pendingOps().size(), 1u);
+    EXPECT_EQ(s.pendingOps()[0].id, b);
+    s.removePendingOp(a);  // removing twice is harmless
+}

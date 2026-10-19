@@ -15,22 +15,6 @@ using namespace cardinal::testing;
 
 namespace {
 
-class QueueExecutor : public Executor {
-public:
-    void post(std::function<void()> job) override { jobs.push_back(std::move(job)); }
-    bool runOne() {
-        if (jobs.empty()) return false;
-        auto job = std::move(jobs.front());
-        jobs.pop_front();
-        job();
-        return true;
-    }
-    void drain() {
-        while (runOne()) {}
-    }
-    std::deque<std::function<void()>> jobs;
-};
-
 struct RecordingSink : ChangeSink {
     void onChanged(const ChangeSet& c) override {
         std::lock_guard lk(mu);

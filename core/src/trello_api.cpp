@@ -182,6 +182,17 @@ std::future<CardExtras> TrelloApi::cardExtras(const std::string& cardId) {
                 });
 }
 
+std::future<CardFields> TrelloApi::cardFields(const std::string& cardId) {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Get,
+                                  url("/cards/" + urlEncode(cardId),
+                                      {{"fields", "name,desc,dateLastActivity"}})),
+                [](const json& j) {
+                    Card c = parseCard(j);
+                    return CardFields{c.name, c.desc, c.dateLastActivity};
+                });
+}
+
 std::future<std::vector<Action>> TrelloApi::actionsSince(const std::string& boardId,
                                                          const std::string& iso) {
     Url url{base_, key_, token_};

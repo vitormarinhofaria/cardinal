@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <memory>
@@ -12,6 +13,19 @@
 #include "cardinal/model.h"
 
 struct sqlite3;
+
+namespace cardinal {
+
+// A write the user made that Trello has not confirmed yet.
+struct PendingOp {
+    std::int64_t id = 0;
+    std::string kind;
+    std::string cardId;
+    std::string payload;  // JSON owned by the write queue
+    std::time_t createdAt = 0;
+};
+
+}  // namespace cardinal
 
 namespace cardinal {
 
@@ -55,6 +69,12 @@ public:
 
     void setSyncCursor(const std::string& boardId, const std::string& iso);
     std::optional<std::string> syncCursor(const std::string& boardId);
+
+    std::int64_t addPendingOp(const std::string& kind, const std::string& cardId,
+                              const std::string& payload, std::time_t createdAt);
+    std::vector<PendingOp> pendingOps();  // oldest first
+    void updatePendingOp(std::int64_t id, const std::string& cardId, const std::string& payload);
+    void removePendingOp(std::int64_t id);
 
     void touchList(const std::string& listId, std::time_t when);
     std::optional<std::time_t> listTouchedAt(const std::string& listId);

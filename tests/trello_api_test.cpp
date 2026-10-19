@@ -322,3 +322,16 @@ TEST_F(ApiTest, TransportFailureOfAnyBoardRequestPropagates) {
     req.script = {{200, R"({"id":"b1","name":"x","labels":[],"members":[]})"}, {500, "boom"}};
     EXPECT_THROW(api.board("b1", Priority::Visible).get(), ApiError);
 }
+
+TEST_F(ApiTest, CardFieldsAsksOnlyWhatConflictCheckNeedsAtInteractivePriority) {
+    req.script = {{200, R"({"id":"c1","name":"N","desc":"D","dateLastActivity":"2026-10-19T12:00:00.000Z"})"}};
+    CardFields f = api.cardFields("c1").get();
+    EXPECT_EQ(f.name, "N");
+    EXPECT_EQ(f.desc, "D");
+    EXPECT_EQ(f.dateLastActivity, "2026-10-19T12:00:00.000Z");
+    ASSERT_EQ(req.calls.size(), 1u);
+    EXPECT_EQ(req.calls[0].method, Method::Get);
+    EXPECT_EQ(req.calls[0].priority, Priority::Interactive);
+    EXPECT_EQ(pathOf(req.calls[0].url), "/cards/c1");
+    EXPECT_EQ(queryOf(req.calls[0].url)["fields"], "name,desc,dateLastActivity");
+}

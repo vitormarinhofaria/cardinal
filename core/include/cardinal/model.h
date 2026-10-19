@@ -64,6 +64,13 @@ struct CardCore {
     std::vector<Comment> comments;  // newest first, as Trello returns them
 };
 
+// The few fields compared to detect that someone else edited a card.
+struct CardFields {
+    std::string name;
+    std::string desc;
+    std::string dateLastActivity;
+};
+
 struct CheckItem {
     std::string id;
     std::string name;

@@ -1,11 +1,16 @@
 #pragma once
 
 #include <deque>
+#include <functional>
+#include <map>
+#include <optional>
+#include <sstream>
 #include <future>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include "cardinal/executor.h"
 #include "cardinal/http.h"
 #include "cardinal/scheduler.h"
 
@@ -93,6 +98,7 @@ struct Route {
     std::string path;      // path below the API base, without query
     std::string contains;  // substring the URL must also contain ("" = any)
     HttpResponse response;
+    std::optional<Method> method = std::nullopt;  // nullopt = any method
 };
 
 // Answers by route (first match wins); unknown paths get 404. `failAll` simulates being offline.
@@ -112,7 +118,7 @@ public:
         std::string path = rest.substr(0, rest.find('?'));
         HttpResponse r{404, "not found"};
         for (const auto& route : routes) {
-            if (route.path == path &&
+            if (route.path == path && (!route.method || *route.method == m) &&
                 (route.contains.empty() || url.find(route.contains) != std::string::npos)) {
                 r = route.response;
                 break;
@@ -135,5 +141,50 @@ public:
     bool failAll = false;
     std::mutex mu;
 };
+
+}  // namespace cardinal::testing
+
+namespace cardinal::testing {
+
+// Runs jobs only when the test says so, in posting order.
+class QueueExecutor : public Executor {
+public:
+    void post(std::function<void()> job) override { jobs.push_back(std::move(job)); }
+    bool runOne() {
+        if (jobs.empty()) return false;
+        auto job = std::move(jobs.front());
+        jobs.pop_front();
+        job();
+        return true;
+    }
+    void drain() {
+        while (runOne()) {}
+    }
+    std::deque<std::function<void()>> jobs;
+};
+
+// "a=b&c=d" (percent-encoded) -> {a:b, c:d}
+inline std::map<std::string, std::string> parseForm(const std::string& body) {
+    auto decode = [](const std::string& s) {
+        std::string out;
+        for (size_t i = 0; i < s.size(); ++i) {
+            if (s[i] == '%' && i + 2 < s.size() + 0) {
+                out += static_cast<char>(std::stoi(s.substr(i + 1, 2), nullptr, 16));
+                i += 2;
+            } else {
+                out += s[i];
+            }
+        }
+        return out;
+    };
+    std::map<std::string, std::string> out;
+    std::stringstream ss(body);
+    std::string pair;
+    while (std::getline(ss, pair, '&')) {
+        auto eq = pair.find('=');
+        out[decode(pair.substr(0, eq))] = eq == std::string::npos ? "" : decode(pair.substr(eq + 1));
+    }
+    return out;
+}
 
 }  // namespace cardinal::testing
