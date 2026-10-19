@@ -561,3 +561,52 @@ TEST_F(QueueTest, DestroyingABlockedQueueStopsItsRetryTimerPromptly) {
     exec.drain();
     EXPECT_EQ(req.calls.size(), calls);
 }
+
+TEST_F(QueueTest, ConflictIsDetectedAgainstWhatTheUserSawEvenAfterTheCacheMovedOn) {
+    // The user started editing when the description was "versão que eu vi"; meanwhile a teammate
+    // changed it and the cache refreshed to the teammate's text, with a matching activity date.
+    std::vector<Card> c{*store->card("c1")};
+    c[0].desc = "versão da colega";
+    c[0].dateLastActivity = "t5";
+    store->upsertCards(c);
+    route(Method::Get, "/cards/c1", 200,
+          R"({"id":"c1","name":"A","desc":"versão da colega","dateLastActivity":"t5"})");
+    route(Method::Put, "/cards/c1", 200, kCard1);
+    make();
+    EditCard edit{"c1", std::nullopt, std::string("minha versão")};
+    edit.baseDesc = "versão que eu vi";
+    queue->enqueue(edit);
+    exec.drain();
+
+    ASSERT_EQ(sink.conflicts.size(), 1u);
+    EXPECT_EQ(sink.conflicts[0].field, "desc");
+    EXPECT_EQ(sink.conflicts[0].theirs, "versão da colega");
+    EXPECT_EQ(sink.conflicts[0].yours, "minha versão");
+    EXPECT_EQ(sent(Method::Put, "/cards/c1").size(), 1u);  // still last write wins
+}
+
+TEST_F(QueueTest, NoConflictWhenTheRemoteTextIsWhatTheUserSaw) {
+    route(Method::Get, "/cards/c1", 200,
+          R"({"id":"c1","name":"A","desc":"versão que eu vi","dateLastActivity":"t9"})");
+    route(Method::Put, "/cards/c1", 200, kCard1);
+    make();
+    EditCard edit{"c1", std::nullopt, std::string("minha versão")};
+    edit.baseDesc = "versão que eu vi";
+    queue->enqueue(edit);
+    exec.drain();
+    EXPECT_TRUE(sink.conflicts.empty());
+}
+
+TEST_F(QueueTest, RevertAfterARejectionRestoresTheCacheNotTheStaleBase) {
+    std::vector<Card> c{*store->card("c1")};
+    c[0].desc = "versão da colega";
+    store->upsertCards(c);
+    route(Method::Get, "/cards/c1", 200, R"({"id":"c1","name":"A","desc":"versão da colega","dateLastActivity":"t0"})");
+    route(Method::Put, "/cards/c1", 422, "nope");
+    make();
+    EditCard edit{"c1", std::nullopt, std::string("minha versão")};
+    edit.baseDesc = "versão que eu vi";
+    queue->enqueue(edit);
+    exec.drain();
+    EXPECT_EQ(store->card("c1")->desc, "versão da colega");
+}

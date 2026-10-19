@@ -230,7 +230,11 @@ struct AppServices : std::enable_shared_from_this<AppServices> {
         }
         void onRejected(const Rejection& r) override {
             if (svc.dead) return;
-            svc.updateStatus([&](AppStatus& s) { s.lastError = r.what; });
+            svc.updateStatus([&](AppStatus& s) {
+                s.lastError = r.what;
+                ++s.rejections;
+                s.lastRejectionKind = r.kind;
+            });
             svc.forEachListener([&](Listener& l) { l.rejected(r); });
         }
         void onConflict(const Conflict& c) override {
@@ -639,11 +643,11 @@ CardPanelVM::CardPanelVM(std::shared_ptr<AppServices> services, std::string card
 
 CardPanelVM::~CardPanelVM() = default;
 
-void CardPanelVM::setTitle(const std::string& title) {
-    services_->enqueue(EditCard{core_->id(), title, std::nullopt});
+void CardPanelVM::setTitle(const std::string& title, std::optional<std::string> basedOn) {
+    services_->enqueue(EditCard{core_->id(), title, std::nullopt, std::move(basedOn), std::nullopt});
 }
-void CardPanelVM::setDescription(const std::string& description) {
-    services_->enqueue(EditCard{core_->id(), std::nullopt, description});
+void CardPanelVM::setDescription(const std::string& description, std::optional<std::string> basedOn) {
+    services_->enqueue(EditCard{core_->id(), std::nullopt, description, std::nullopt, std::move(basedOn)});
 }
 void CardPanelVM::addLabel(const std::string& labelId) {
     services_->enqueue(AddLabel{core_->id(), labelId});

@@ -197,6 +197,8 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
             p["desc"] = *o.desc;
             p["before"]["desc"] = c.desc;
         }
+        if (o.baseName) p["base"]["name"] = *o.baseName;
+        if (o.baseDesc) p["base"]["desc"] = *o.baseDesc;
         return {"edit", o.cardId, p};
     }
     Built build(const AddLabel& o) {
@@ -420,11 +422,15 @@ struct WriteQueue::Impl : std::enable_shared_from_this<Impl> {
 
     void checkConflict(const json& p) {
         CardFields remote = api.cardFields(p["cardId"]).get();
-        if (remote.dateLastActivity == p.value("baseActivity", std::string())) return;
+        // With a base (what the user saw) the fields decide; without one, an unchanged activity
+        // date means nobody touched the card since the write was queued.
+        const bool haveBase = p.contains("base");
+        if (!haveBase && remote.dateLastActivity == p.value("baseActivity", std::string())) return;
         for (const char* field : {"name", "desc"}) {
             if (!p.contains(field)) continue;
             const std::string& theirs = std::string(field) == "name" ? remote.name : remote.desc;
-            std::string before = p["before"].value(field, std::string());
+            std::string before = haveBase && p["base"].contains(field) ? p["base"][field].get<std::string>()
+                                                                       : p["before"].value(field, std::string());
             std::string mine = p[field];
             if (theirs != before && theirs != mine)
                 sink.onConflict({p["cardId"], field, theirs, mine});

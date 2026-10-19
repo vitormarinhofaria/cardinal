@@ -120,6 +120,8 @@ struct AppStatus {
     bool loginRequired = false;  // Trello rejected the token (401)
     int pendingWrites = 0;       // edits not yet confirmed by Trello
     std::string lastError;
+    int rejections = 0;               // writes Trello refused for good (each one was reverted)
+    std::string lastRejectionKind;    // "move", "create", "edit", "label", "member", "comment"
     bool operator==(const AppStatus&) const = default;
 };
 
@@ -228,8 +230,9 @@ public:
     ~CardPanelVM();
     Observable<CardPanelState>& state() { return state_; }
 
-    void setTitle(const std::string& title);
-    void setDescription(const std::string& description);
+    // `basedOn`: the text the user was looking at when they began editing (see EditCard).
+    void setTitle(const std::string& title, std::optional<std::string> basedOn = std::nullopt);
+    void setDescription(const std::string& description, std::optional<std::string> basedOn = std::nullopt);
     void addLabel(const std::string& labelId);
     void addMember(const std::string& memberId);
     void addComment(const std::string& text);

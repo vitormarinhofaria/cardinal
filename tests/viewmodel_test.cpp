@@ -679,3 +679,36 @@ TEST_F(VmTest, AListTheUserEmptiedStaysAnEmptyLoadedList) {
     EXPECT_TRUE(l2->cards.empty());
     EXPECT_EQ(l2->cardCount, 0);
 }
+
+TEST_F(VmTest, PanelEditsCarryWhatTheUserSawSoLaterConflictsAreCaught) {
+    routeFirst(Method::Put, "/cards/c1", 200, R"({"id":"c1","idList":"l1","name":"x","pos":1})");
+    routeFirst(Method::Get, "/cards/c1", 200,
+               R"({"id":"c1","name":"Corrigir login","desc":"descrição da colega","dateLastActivity":"t1"})",
+               "fields=name%2Cdesc%2CdateLastActivity");
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    auto panel = app->openCard("c1");
+    pump();
+    panel->setDescription("minha", std::string("o que eu estava vendo"));
+    pump();
+    ASSERT_FALSE(panel->state().get().notices.empty());
+    EXPECT_EQ(panel->state().get().notices.back().kind, PanelNotice::Kind::ConflictOverwritten);
+    EXPECT_EQ(panel->state().get().notices.back().detail, "descrição da colega");
+}
+
+TEST_F(VmTest, RejectedWritesAreCountedForABoardLevelNotice) {
+    routeFirst(Method::Put, "/cards/c3", 400, "invalid");
+    make();
+    auto board = app->openBoard("b1");
+    board->expandList("l2");
+    pump();
+    ASSERT_EQ(app->status().get().rejections, 0);
+    board->moveCard("c3", "l1", 0);
+    pump();
+    EXPECT_EQ(app->status().get().rejections, 1);
+    EXPECT_EQ(app->status().get().lastRejectionKind, "move");
+    board->moveCard("c3", "l1", 0);
+    pump();
+    EXPECT_EQ(app->status().get().rejections, 2);  // the same failure again is a new notice
+}

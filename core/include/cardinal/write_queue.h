@@ -28,8 +28,12 @@ struct CreateCard {
 };
 struct EditCard {
     std::string cardId;
-    std::optional<std::string> name;
-    std::optional<std::string> desc;
+    std::optional<std::string> name = std::nullopt;
+    std::optional<std::string> desc = std::nullopt;
+    // What the user was looking at when they started editing. Conflicts are judged against this,
+    // not against the cache, which may have refreshed to someone else's text while they typed.
+    std::optional<std::string> baseName = std::nullopt;
+    std::optional<std::string> baseDesc = std::nullopt;
 };
 struct AddLabel {
     std::string cardId;
