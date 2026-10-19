@@ -289,3 +289,23 @@ TEST_F(SessionTest, DestroyingWhileWaitingForTheBrowserDoesNotHang) {
     EXPECT_LT(std::chrono::steady_clock::now() - start, 3s);
     ui.runAll();  // late callbacks are harmless
 }
+
+TEST_F(SessionTest, SubscriberRemovedWhileSigningOutIsNotCalledAfterwards) {
+    creds.value = Credentials{"WRONGTOKEN0123456789"};
+    make();
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::Ready; }));
+
+    // A page that subscribed after the Session and removes itself when the session ends.
+    int pageId = 0;
+    int pageCalls = 0;
+    AppModel* model = session->model();
+    pageId = model->status().changed.connect([&](const AppStatus&) { ++pageCalls; });
+    session->state().changed.connect([&](const SessionState& s) {
+        if (s.phase != SessionState::Phase::Ready) model->status().changed.disconnect(pageId);
+    });
+    int before = pageCalls;
+    model->start();
+    ASSERT_TRUE(settle([&] { return phase() == SessionState::Phase::SignedOut; }));
+    // the status update that carried loginRequired reached the page at most once, never after it left
+    EXPECT_LE(pageCalls - before, 1);
+}

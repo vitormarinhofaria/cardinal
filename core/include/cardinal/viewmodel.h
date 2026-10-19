@@ -32,29 +32,40 @@ public:
     virtual void post(std::function<void()> fn) = 0;
 };
 
-// UI-thread-only signal.
+// UI-thread-only signal. A slot disconnected while an emit is running is not called, even if it
+// was already queued for that emit (a page that tears itself down must not be called afterwards).
 template <class... A>
 class Signal {
 public:
     using Fn = std::function<void(A...)>;
     int connect(Fn fn) {
-        fns_.emplace_back(next_, std::move(fn));
-        return next_++;
+        auto slot = std::make_shared<Slot>();
+        slot->id = next_++;
+        slot->fn = std::move(fn);
+        slots_.push_back(slot);
+        return slot->id;
     }
     void disconnect(int id) {
-        for (auto it = fns_.begin(); it != fns_.end(); ++it)
-            if (it->first == id) {
-                fns_.erase(it);
+        for (auto it = slots_.begin(); it != slots_.end(); ++it)
+            if ((*it)->id == id) {
+                (*it)->live = false;
+                slots_.erase(it);
                 return;
             }
     }
     void emit(A... args) {
-        auto copy = fns_;  // handlers may connect/disconnect while running
-        for (auto& [id, fn] : copy) fn(args...);
+        auto copy = slots_;  // handlers may connect/disconnect while running
+        for (auto& slot : copy)
+            if (slot->live) slot->fn(args...);
     }
 
 private:
-    std::vector<std::pair<int, Fn>> fns_;
+    struct Slot {
+        int id = 0;
+        Fn fn;
+        bool live = true;
+    };
+    std::vector<std::shared_ptr<Slot>> slots_;
     int next_ = 1;
 };
 

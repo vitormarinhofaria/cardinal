@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <clocale>
 #include <map>
 #include <sstream>
 
@@ -334,4 +335,24 @@ TEST_F(ApiTest, CardFieldsAsksOnlyWhatConflictCheckNeedsAtInteractivePriority) {
     EXPECT_EQ(req.calls[0].priority, Priority::Interactive);
     EXPECT_EQ(pathOf(req.calls[0].url), "/cards/c1");
     EXPECT_EQ(queryOf(req.calls[0].url)["fields"], "name,desc,dateLastActivity");
+}
+
+TEST_F(ApiTest, PositionsAreNeverFormattedWithALocaleDecimalComma) {
+    const char* previous = std::setlocale(LC_NUMERIC, nullptr);
+    std::string saved = previous ? previous : "C";
+    if (!std::setlocale(LC_NUMERIC, "pt_BR.utf8")) GTEST_SKIP() << "pt_BR.utf8 locale not installed";
+    req.script = {{200, R"({"id":"c1","idList":"l2","name":"N","pos":98304.5})"}};
+    api.moveCard("c1", "l2", 98304.5).get();
+    std::setlocale(LC_NUMERIC, saved.c_str());
+    ASSERT_EQ(req.calls.size(), 1u);
+    auto form = parseQuery(req.calls[0].body);
+    EXPECT_EQ(form["pos"], "98304.5");  // Trello needs a dot; "98304,5" is not a number
+}
+
+TEST_F(ApiTest, PositionsKeepTheirPrecisionForTinyAndHugeValues) {
+    req.script = {{200, R"({"id":"c1","idList":"l2","name":"N"})"}, {200, R"({"id":"c1","idList":"l2","name":"N"})"}};
+    api.moveCard("c1", "l2", 0.000123).get();
+    api.moveCard("c1", "l2", 1.5e9 + 0.25).get();
+    EXPECT_EQ(std::stod(parseQuery(req.calls[0].body)["pos"]), 0.000123);
+    EXPECT_EQ(std::stod(parseQuery(req.calls[1].body)["pos"]), 1.5e9 + 0.25);
 }

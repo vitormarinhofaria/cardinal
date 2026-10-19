@@ -1,5 +1,6 @@
 #include "cardinal/trello_api.h"
 
+#include <charconv>
 #include <nlohmann/json.hpp>
 #include <type_traits>
 #include <utility>
@@ -14,6 +15,13 @@ constexpr const char* kCardListFields = "name,idList,pos,idLabels,idMembers,date
 constexpr const char* kActionFilter =
     "commentCard,createCard,updateCard,deleteCard,copyCard,moveCardToBoard,moveCardFromBoard,"
     "addLabelToCard,removeLabelFromCard,addMemberToCard,removeMemberFromCard,createList,updateList";
+
+// Shortest text that reads back as the same double, always with a dot (never the locale's comma).
+std::string number(double v) {
+    char buf[64];
+    auto r = std::to_chars(buf, buf + sizeof buf, v);
+    return std::string(buf, r.ptr);
+}
 
 std::string encodeParams(const Params& params) {
     std::string out;
@@ -207,7 +215,7 @@ std::future<Card> TrelloApi::moveCard(const std::string& cardId, const std::stri
     Url url{base_, key_, token_};
     return then(requester_.submit(Priority::Interactive, Method::Put,
                                   url("/cards/" + urlEncode(cardId)),
-                                  encodeParams({{"idList", listId}, {"pos", std::to_string(pos)}})),
+                                  encodeParams({{"idList", listId}, {"pos", number(pos)}})),
                 [](const json& j) { return parseCard(j); });
 }
 
