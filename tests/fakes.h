@@ -55,3 +55,34 @@ public:
 };
 
 }  // namespace cardinal::testing
+
+namespace cardinal::testing {
+
+struct Submitted {
+    Priority priority;
+    Method method;
+    std::string url;
+    std::string body;
+};
+
+// Records every submission and answers with the next scripted response (default 200 "{}").
+class FakeRequester : public Requester {
+public:
+    std::future<HttpResponse> submit(Priority p, Method m, std::string url,
+                                     std::string body) override {
+        calls.push_back({p, m, url, body});
+        std::promise<HttpResponse> promise;
+        HttpResponse r{200, "{}"};
+        if (!script.empty()) {
+            r = script.front();
+            script.pop_front();
+        }
+        promise.set_value(r);
+        return promise.get_future();
+    }
+
+    std::vector<Submitted> calls;
+    std::deque<HttpResponse> script;
+};
+
+}  // namespace cardinal::testing

@@ -17,6 +17,14 @@ namespace cardinal {
 
 enum class Priority { Interactive = 0, Visible = 1, Background = 2 };
 
+// What the API layer needs from a scheduler: queue a request at a priority.
+class Requester {
+public:
+    virtual ~Requester() = default;
+    virtual std::future<HttpResponse> submit(Priority priority, Method method, std::string url,
+                                             std::string body = "") = 0;
+};
+
 class Clock {
 public:
     using TimePoint = std::chrono::steady_clock::time_point;
@@ -40,7 +48,7 @@ struct RateLimit {
 
 // Sends requests in priority order without exceeding the rate limit, retrying 429s with backoff.
 // 401 and other statuses are returned to the caller untouched.
-class Scheduler {
+class Scheduler : public Requester {
 public:
     // autoStart=false is for tests: the caller drives time by calling pump().
     Scheduler(HttpClient& http, RateLimit limit, Clock& clock, bool autoStart = true);
@@ -49,7 +57,7 @@ public:
     Scheduler& operator=(const Scheduler&) = delete;
 
     std::future<HttpResponse> submit(Priority priority, Method method, std::string url,
-                                     std::string body = "");
+                                     std::string body = "") override;
 
     // Dispatches whatever the limit and the clock allow now. Returns when it wants to be called
     // again, or nullopt if idle until the next submit.

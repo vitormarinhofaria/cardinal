@@ -67,4 +67,40 @@ Card parseCard(const json& j) {
     return c;
 }
 
+Checklist parseChecklist(const json& j) {
+    Checklist c;
+    c.id = str(j, "id");
+    c.name = str(j, "name");
+    auto items = j.find("checkItems");
+    if (items != j.end() && items->is_array()) {
+        for (const auto& it : *items)
+            c.items.push_back({str(it, "id"), str(it, "name"), str(it, "state") == "complete"});
+    }
+    return c;
+}
+
+Attachment parseAttachment(const json& j) {
+    return {str(j, "id"), str(j, "name"), str(j, "url")};
+}
+
+Action parseAction(const json& j) {
+    Action a;
+    a.id = str(j, "id");
+    a.type = str(j, "type");
+    a.date = str(j, "date");
+    a.memberId = str(j, "idMemberCreator");
+    auto data = j.find("data");
+    if (data != j.end() && data->is_object()) {
+        a.dataJson = data->dump();
+        auto sub = [&](const char* key) -> std::string {
+            auto it = data->find(key);
+            return it != data->end() && it->is_object() ? str(*it, "id") : std::string();
+        };
+        a.cardId = sub("card");
+        a.listId = sub("list");
+        if (a.listId.empty()) a.listId = sub("listAfter");
+    }
+    return a;
+}
+
 }  // namespace cardinal
