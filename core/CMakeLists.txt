@@ -13,6 +13,8 @@ add_library(cardinal_core STATIC
   src/trello_api.cpp
   src/executor.cpp
   src/sync.cpp
+  src/polling_event_source.cpp
+  src/time_util.cpp
 )
 target_include_directories(cardinal_core PUBLIC include)
 target_link_libraries(cardinal_core PUBLIC

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "cardinal/event_source.h"
 #include "cardinal/executor.h"
 #include "cardinal/model.h"
 #include "cardinal/store.h"
@@ -51,7 +52,7 @@ struct SyncOptions {
 class SyncEngine {
 public:
     SyncEngine(TrelloApi& api, Store& store, Executor& executor, ChangeSink& sink,
-               SyncOptions options = {});
+               SyncOptions options = {}, EventSource* events = nullptr);
     ~SyncEngine();  // waits for running jobs; queued ones become no-ops
     SyncEngine(const SyncEngine&) = delete;
     SyncEngine& operator=(const SyncEngine&) = delete;

@@ -4,24 +4,30 @@
 #include <condition_variable>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
+#include <set>
+
+#include "cardinal/time_util.h"
 
 namespace cardinal {
 
 struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
-    Impl(TrelloApi& a, Store& s, Executor& e, ChangeSink& k, SyncOptions o)
-        : api(a), store(s), exec(e), sink(k), opts(std::move(o)) {}
+    Impl(TrelloApi& a, Store& s, Executor& e, ChangeSink& k, SyncOptions o, EventSource* ev)
+        : api(a), store(s), exec(e), sink(k), opts(std::move(o)), events(ev) {}
 
     TrelloApi& api;
     Store& store;
     Executor& exec;
     ChangeSink& sink;
     const SyncOptions opts;
+    EventSource* const events;
 
     std::mutex mutex;
     std::condition_variable idle;
     bool closed = false;
     int running = 0;
     std::string currentBoard;
+    std::string openCardId;
     std::map<std::string, CardExtras> extras;
 
     // Jobs hold the Impl alive, so a job queued before the engine was destroyed stays safe to run.
@@ -77,7 +83,17 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         sink.onChanged(c);
     }
 
-    void loadBoard(const std::string& boardId) {
+    // `fresh`: the user just opened the board, so live updates start from now. Otherwise this is a
+    // refresh triggered by an event and the cursor must stay where the poller put it.
+    void loadBoard(const std::string& boardId, bool fresh) {
+        if (fresh && events) {
+            store.setSyncCursor(boardId, isoUtc(opts.now()));
+            events->watch(boardId, [weak = std::weak_ptr<Impl>(shared_from_this()),
+                                    boardId](std::vector<Action> actions) {
+                if (auto self = weak.lock()) self->applyActions(boardId, actions);
+            });
+            if (!isCurrent(boardId)) events->unwatch(boardId);  // user already moved on
+        }
         auto snap = api.board(boardId, Priority::Visible).get();
         std::vector<std::string> listIds;
         for (const auto& l : snap.lists) listIds.push_back(l.id);
@@ -138,6 +154,10 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
     }
 
     void openCard(const std::string& cardId) {
+        {
+            std::lock_guard lk(mutex);
+            openCardId = cardId;
+        }
         auto cached = store.card(cardId);
         if (cached) store.touchList(cached->listId, opts.now());
 
@@ -166,6 +186,91 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         post([this, cardId] { loadExtras(cardId); });
     }
 
+
+    // Live updates: invalidate and refetch what the actions touched. Runs on the poller's thread
+    // and throws on failure, so the poller keeps its cursor and retries the batch.
+    void applyActions(const std::string& boardId, const std::vector<Action>& actions) {
+        {
+            std::lock_guard lk(mutex);
+            if (closed || currentBoard != boardId) return;
+            ++running;
+        }
+        struct Done {
+            Impl& self;
+            ~Done() {
+                std::lock_guard lk(self.mutex);
+                --self.running;
+                self.idle.notify_all();
+            }
+        } done{*this};
+
+        std::string open;
+        {
+            std::lock_guard lk(mutex);
+            open = openCardId;
+        }
+        std::set<std::string> lists, removed;
+        bool boardChanged = actions.size() >= kActionLimit;  // older events may be missing
+        bool refreshOpen = false;
+
+        for (const auto& a : actions) {
+            auto data = nlohmann::json::parse(a.dataJson.empty() ? "{}" : a.dataJson, nullptr, false);
+            if (!data.is_object()) data = nlohmann::json::object();
+            auto idOf = [&](const char* key) -> std::string {
+                auto it = data.find(key);
+                return it != data.end() && it->is_object() ? it->value("id", std::string()) : "";
+            };
+            auto addList = [&](const std::string& id) {
+                if (!id.empty()) lists.insert(id);
+            };
+            const std::string& type = a.type;
+            if (type == "createList" || type == "updateList") {
+                boardChanged = true;
+                continue;
+            }
+            if (!a.cardId.empty() && a.cardId == open) refreshOpen = true;
+
+            bool archived = type == "updateCard" && data.contains("card") &&
+                            data["card"].is_object() && data["card"].value("closed", false);
+            if (type == "deleteCard" || type == "moveCardFromBoard" || archived) {
+                if (!a.cardId.empty()) removed.insert(a.cardId);
+                addList(idOf("list"));
+                addList(idOf("listBefore"));
+                continue;
+            }
+            addList(idOf("list"));
+            addList(idOf("listAfter"));
+            addList(idOf("listBefore"));
+            if (idOf("list").empty() && idOf("listAfter").empty()) {
+                if (auto cached = store.card(a.cardId)) addList(cached->listId);
+            }
+        }
+
+        if (boardChanged) {
+            loadBoard(boardId, false);
+            for (const auto& l : store.lists(boardId))
+                if (!store.cards(l.id).empty()) lists.insert(l.id);
+        }
+        for (const auto& id : removed) {
+            auto cached = store.card(id);
+            if (cached) lists.insert(cached->listId);
+            removeCard(id, cached);
+        }
+        bool listGone = false;
+        for (const auto& id : lists) {
+            try {
+                loadListCards(id, Priority::Visible);
+            } catch (const ApiError& e) {
+                if (e.status() != 404) throw;
+                listGone = true;
+            }
+        }
+        if (listGone) loadBoard(boardId, false);
+        if (refreshOpen && !open.empty() && !removed.count(open)) openCard(open);
+    }
+
+    static constexpr size_t kActionLimit = 1000;  // what Trello returns per request at most
+
     void loadExtras(const std::string& cardId) {
         CardExtras loaded;
         try {
@@ -185,21 +290,34 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
 };
 
 SyncEngine::SyncEngine(TrelloApi& api, Store& store, Executor& executor, ChangeSink& sink,
-                       SyncOptions options)
-    : impl_(std::make_shared<Impl>(api, store, executor, sink, std::move(options))) {}
+                       SyncOptions options, EventSource* events)
+    : impl_(std::make_shared<Impl>(api, store, executor, sink, std::move(options), events)) {}
 
-SyncEngine::~SyncEngine() { impl_->shutdown(); }
+SyncEngine::~SyncEngine() {
+    if (impl_->events) {
+        std::string board;
+        {
+            std::lock_guard lk(impl_->mutex);
+            board = impl_->currentBoard;
+        }
+        if (!board.empty()) impl_->events->unwatch(board);
+    }
+    impl_->shutdown();
+}
 
 void SyncEngine::start() {
     impl_->post([p = impl_.get()] { p->loadBoards(); });
 }
 
 void SyncEngine::openBoard(const std::string& id) {
+    std::string previous;
     {
         std::lock_guard lk(impl_->mutex);
+        previous = impl_->currentBoard;
         impl_->currentBoard = id;
     }
-    impl_->post([p = impl_.get(), id] { p->loadBoard(id); });
+    if (impl_->events && !previous.empty() && previous != id) impl_->events->unwatch(previous);
+    impl_->post([p = impl_.get(), id] { p->loadBoard(id, true); });
 }
 
 void SyncEngine::openCard(const std::string& id) {

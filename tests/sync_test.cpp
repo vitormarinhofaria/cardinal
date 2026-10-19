@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <thread>
 
+#include "cardinal/event_source.h"
 #include "cardinal/sync.h"
+#include "cardinal/time_util.h"
 #include "fakes.h"
 
 using namespace cardinal;
@@ -47,6 +50,26 @@ struct RecordingSink : ChangeSink {
     std::vector<ChangeSet> changes;
     std::vector<SyncError> errors;
 };
+
+struct FakeEventSource : EventSource {
+    void watch(const std::string& board, Handler h) override { handlers[board] = std::move(h); }
+    void unwatch(const std::string& board) override { handlers.erase(board); }
+    void deliver(const std::string& board, std::vector<Action> a) {
+        handlers.at(board)(std::move(a));
+    }
+    std::map<std::string, Handler> handlers;
+};
+
+// {"type":..., "data":{card:{id}, list:{id}, ...extra}}
+Action action(const std::string& type, const std::string& cardId, const std::string& listId = "",
+              const nlohmann::json& extra = nlohmann::json::object()) {
+    nlohmann::json data = extra;
+    if (!cardId.empty()) data["card"]["id"] = cardId;
+    if (!listId.empty()) data["list"]["id"] = listId;
+    return parseAction({{"id", type + cardId + listId}, {"type", type},
+                        {"date", "2026-10-19T12:00:00.000Z"}, {"idMemberCreator", "m9"},
+                        {"data", data}});
+}
 
 constexpr const char* kBoards = R"([{"id":"b1","name":"Produto","closed":false}])";
 constexpr const char* kBoardInfo = R"({"id":"b1","name":"Produto","closed":false,
@@ -100,7 +123,13 @@ protected:
         std::filesystem::remove_all(dir_);
     }
     void makeEngine() {
-        engine = std::make_unique<SyncEngine>(*api, *store, exec, sink, opts);
+        engine = std::make_unique<SyncEngine>(*api, *store, exec, sink, opts, &events);
+    }
+    size_t coreFetches(const std::string& cardId) {
+        size_t n = 0;
+        for (const auto& c : callsTo("/cards/" + cardId))
+            if (c.url.find("actions=commentCard") != std::string::npos) ++n;
+        return n;
     }
     static Card card(std::string id, std::string listId, std::string name, std::string desc = "") {
         Card c;
@@ -123,6 +152,7 @@ protected:
     TrelloApi apiObj{req, "K", "T"};
     TrelloApi* api = &apiObj;
     QueueExecutor exec;
+    FakeEventSource events;
     RecordingSink sink;
     SyncOptions opts;
     std::time_t now = 1'000'000;
@@ -396,4 +426,180 @@ TEST_F(SyncTest, RealThreadPoolLoadsEverythingWithoutRaces) {
         EXPECT_EQ(real.card("c1")->desc, "novo");
         EXPECT_TRUE(real.extras("c1").has_value());
     }  // engine destroyed while the pool is still alive: must not hang or crash
+}
+
+// ---- live updates ----
+
+TEST_F(SyncTest, OpenBoardWatchesItAndSetsCursorFromClock) {
+    now = 1'760'875'500;
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    EXPECT_EQ(events.handlers.count("b1"), 1u);
+    EXPECT_EQ(store->syncCursor("b1"), "2025-10-19T12:05:00.000Z");
+}
+
+TEST_F(SyncTest, SwitchingBoardsWatchesOnlyTheCurrentOne) {
+    req.routes.insert(req.routes.begin(),
+                      {{"/boards/b2/lists", "", {200, "[]"}},
+                       {"/boards/b2", "", {200, R"({"id":"b2","name":"Outro","labels":[],"members":[]})"}}});
+    makeEngine();
+    engine->openBoard("b1");
+    engine->openBoard("b2");  // before b1's job ever ran
+    exec.drain();
+    EXPECT_EQ(events.handlers.size(), 1u);
+    EXPECT_EQ(events.handlers.count("b2"), 1u);
+}
+
+TEST_F(SyncTest, DestroyingEngineUnwatches) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    engine.reset();
+    EXPECT_TRUE(events.handlers.empty());
+}
+
+TEST_F(SyncTest, CommentOnOpenCardRefetchesItsDetails) {
+    makeEngine();
+    engine->openBoard("b1");
+    engine->openCard("c1");
+    exec.drain();
+    ASSERT_EQ(coreFetches("c1"), 1u);
+    sink.changes.clear();
+
+    events.deliver("b1", {action("commentCard", "c1", "l1")});
+    EXPECT_EQ(coreFetches("c1"), 2u);
+    EXPECT_TRUE(sink.any(&ChangeSet::cardDetails, "c1"));
+    EXPECT_TRUE(sink.any(&ChangeSet::listCards, "l1"));  // comment count on the card row
+}
+
+TEST_F(SyncTest, ActionOnAnotherCardRefreshesItsListButNotTheOpenCard) {
+    makeEngine();
+    engine->openBoard("b1");
+    engine->openCard("c1");
+    exec.drain();
+    size_t listFetches = callsTo("/lists/l1/cards").size();
+
+    events.deliver("b1", {action("addLabelToCard", "c2", "l1")});
+    EXPECT_EQ(coreFetches("c1"), 1u);
+    EXPECT_EQ(callsTo("/lists/l1/cards").size(), listFetches + 1);
+}
+
+TEST_F(SyncTest, MoveRefetchesSourceAndTargetLists) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    events.deliver("b1", {action("updateCard", "c1", "l2",
+                                 {{"listBefore", {{"id", "l1"}}}, {"listAfter", {{"id", "l2"}}}})});
+    EXPECT_EQ(callsTo("/lists/l1/cards").size(), 2u);
+    EXPECT_EQ(callsTo("/lists/l2/cards").size(), 1u);
+}
+
+TEST_F(SyncTest, ActionsOnTheSameListAreCoalescedIntoOneFetch) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    events.deliver("b1", {action("createCard", "c7", "l1"), action("commentCard", "c1", "l1"),
+                          action("addMemberToCard", "c2", "l1")});
+    EXPECT_EQ(callsTo("/lists/l1/cards").size(), 2u);  // initial + one for the whole batch
+}
+
+TEST_F(SyncTest, DeleteCardActionRemovesCardAndReportsIt) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    ASSERT_TRUE(engine->card("c2").has_value());
+    req.routes.insert(req.routes.begin(), {"/lists/l1/cards", "", {200, R"([
+        {"id":"c1","idList":"l1","name":"Corrigir login","pos":1}])"}});
+    sink.changes.clear();
+
+    events.deliver("b1", {action("deleteCard", "c2", "l1")});
+    EXPECT_FALSE(engine->card("c2").has_value());
+    EXPECT_TRUE(sink.any(&ChangeSet::removedCards, "c2"));
+    EXPECT_TRUE(sink.any(&ChangeSet::listCards, "l1"));
+}
+
+TEST_F(SyncTest, ArchiveActionRemovesCardAndReportsIt) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    req.routes.insert(req.routes.begin(), {"/lists/l1/cards", "", {200, R"([
+        {"id":"c1","idList":"l1","name":"Corrigir login","pos":1}])"}});
+    events.deliver("b1", {action("updateCard", "c2", "l1", {{"card", {{"id", "c2"}, {"closed", true}}}})});
+    EXPECT_FALSE(engine->card("c2").has_value());
+    EXPECT_TRUE(sink.any(&ChangeSet::removedCards, "c2"));
+}
+
+TEST_F(SyncTest, DeletingTheOpenCardIsReportedWithoutRefetchingIt) {
+    makeEngine();
+    engine->openBoard("b1");
+    engine->openCard("c1");
+    exec.drain();
+    events.deliver("b1", {action("deleteCard", "c1", "l1")});
+    EXPECT_EQ(coreFetches("c1"), 1u);
+    EXPECT_TRUE(sink.any(&ChangeSet::removedCards, "c1"));
+}
+
+TEST_F(SyncTest, ListCreatedOrRenamedRefreshesTheBoardSnapshot) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    size_t before = callsTo("/boards/b1/lists").size();
+    events.deliver("b1", {action("updateList", "", "l2", {{"old", {{"name", "Fazendo"}}}})});
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), before + 1);
+}
+
+TEST_F(SyncTest, FullBatchMeansEventsMayBeMissingSoBoardIsReloaded) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    size_t before = callsTo("/boards/b1/lists").size();
+    std::vector<Action> many(1000, action("commentCard", "c2", "l1"));
+    events.deliver("b1", many);
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), before + 1);
+    EXPECT_GE(callsTo("/lists/l1/cards").size(), 2u);
+}
+
+TEST_F(SyncTest, FailedRefetchPropagatesSoTheCursorDoesNotAdvance) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    req.failAll = true;
+    EXPECT_THROW(events.deliver("b1", {action("createCard", "c7", "l1")}), std::runtime_error);
+}
+
+TEST_F(SyncTest, VanishedListFallsBackToBoardRefreshInsteadOfStickingForever) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    req.routes.insert(req.routes.begin(), {"/lists/l9/cards", "", {404, "gone"}});
+    size_t before = callsTo("/boards/b1/lists").size();
+    EXPECT_NO_THROW(events.deliver("b1", {action("moveCardFromBoard", "cx", "l9")}));
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), before + 1);
+}
+
+TEST_F(SyncTest, StaleDeliveryForNonCurrentBoardIsIgnored) {
+    req.routes.insert(req.routes.begin(),
+                      {{"/boards/b2/lists", "", {200, "[]"}},
+                       {"/boards/b2", "", {200, R"({"id":"b2","name":"Outro","labels":[],"members":[]})"}}});
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    auto oldHandler = events.handlers.at("b1");
+    engine->openBoard("b2");
+    exec.drain();
+    size_t calls = req.calls.size();
+    oldHandler({action("createCard", "c7", "l1")});
+    EXPECT_EQ(req.calls.size(), calls);
+}
+
+TEST_F(SyncTest, DeliveryAfterEngineDestroyedIsHarmless) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    auto handler = events.handlers.at("b1");
+    engine.reset();
+    size_t calls = req.calls.size();
+    EXPECT_NO_THROW(handler({action("createCard", "c7", "l1")}));
+    EXPECT_EQ(req.calls.size(), calls);
 }
