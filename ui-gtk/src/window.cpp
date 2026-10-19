@@ -2,8 +2,9 @@
 
 namespace cardinal::gtk {
 
-MainWindow::MainWindow(AdwApplication* app, Session& session, std::string dataDir)
-    : session_(session), dataDir_(std::move(dataDir)) {
+MainWindow::MainWindow(AdwApplication* app, Session& session, std::string dataDir,
+                       std::string openCardOnStart)
+    : session_(session), dataDir_(std::move(dataDir)), openCardOnStart_(std::move(openCardOnStart)) {
     window_ = adw_application_window_new(GTK_APPLICATION(app));
     gtk_window_set_title(GTK_WINDOW(window_), "Cardinal");
     gtk_window_set_default_size(GTK_WINDOW(window_), 1280, 800);
@@ -82,7 +83,7 @@ void MainWindow::onSessionChanged(const SessionState& state) {
             if (!app_ && session_.model()) {
                 trace("session ready");
                 app_ = std::make_unique<AppPage>(*session_.model(), dataDir_,
-                                                 [this] { session_.logout(); });
+                                                 [this] { session_.logout(); }, openCardOnStart_);
                 gtk_stack_add_named(GTK_STACK(stack_), app_->widget(), "app");
                 gtk_stack_set_visible_child_name(GTK_STACK(stack_), "app");
             }

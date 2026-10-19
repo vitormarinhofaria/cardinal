@@ -8,8 +8,12 @@
 
 namespace cardinal::gtk {
 
-AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout)
-    : model_(model), dataDir_(std::move(dataDir)), onLogout_(std::move(onLogout)) {
+AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout,
+                 std::string openCardOnStart)
+    : model_(model),
+      dataDir_(std::move(dataDir)),
+      onLogout_(std::move(onLogout)),
+      openCardOnStart_(std::move(openCardOnStart)) {
     root_ = adw_toolbar_view_new();
 
     GtkWidget* header = adw_header_bar_new();
@@ -74,8 +78,7 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
     adw_overlay_split_view_set_sidebar_position(ADW_OVERLAY_SPLIT_VIEW(split_), GTK_PACK_END);
     adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), FALSE);
     adw_overlay_split_view_set_min_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 380);
-    adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 560);
-    adw_overlay_split_view_set_sidebar_width_fraction(ADW_OVERLAY_SPLIT_VIEW(split_), 0.32);
+    adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 440);
     adw_overlay_split_view_set_content(ADW_OVERLAY_SPLIT_VIEW(split_), content_);
     adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(root_), split_);
 
@@ -156,13 +159,24 @@ void AppPage::openBoard(const std::string& boardId) {
     };
     headerConn_ = boardVm_->header().changed.connect(setTitle);
     setTitle(boardVm_->header().get());
+    if (!openCardOnStart_.empty()) {
+        openCard(openCardOnStart_);
+        openCardOnStart_.clear();
+    }
 }
 
 void AppPage::openCard(const std::string& cardId) {
+    trace("panel: open requested");
     auto vm = model_.openCard(cardId);
     panel_ = std::make_unique<CardPanel>(vm, [this] { closeCard(); });
     adw_overlay_split_view_set_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), panel_->widget());
     adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), TRUE);
+    if (g_getenv("CARDINAL_SELFTEST")) {
+        g_timeout_add(700, [](gpointer d) -> gboolean {
+            static_cast<CardPanel*>(d)->selfTest();
+            return G_SOURCE_REMOVE;
+        }, panel_.get());
+    }
 }
 
 void AppPage::closeCard() {

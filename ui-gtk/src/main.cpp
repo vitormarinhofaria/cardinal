@@ -25,6 +25,7 @@ struct Options {
     int pollSeconds = 20;
     std::string snapshot;  // render the window to this PNG after snapshotDelayMs, then quit
     int snapshotDelayMs = 2500;
+    std::string openCard;  // open this card as soon as the board shows (development)
 };
 
 class MemoryCredentials : public CredentialStore {
@@ -100,7 +101,7 @@ void activate(GApplication* gapp, gpointer data) {
 
     app->session = std::make_unique<Session>(cfg, *app->credentials, app->browser, app->dispatcher);
     app->window = std::make_unique<cardinal::gtk::MainWindow>(ADW_APPLICATION(gapp), *app->session,
-                                                              app->dataDir);
+                                                              app->dataDir, o.openCard);
     gtk_window_present(app->window->window());
     cardinal::gtk::trace("window presented");
     cardinal::gtk::traceNextFrame(GTK_WIDGET(app->window->window()), "window: first frame (whatever it shows)");
@@ -130,6 +131,7 @@ int main(int argc, char** argv) {
     static gint poll = 20;
     static gchar* snapshot = nullptr;
     static gint snapshotDelay = 2500;
+    static gchar* openCard = nullptr;
     GOptionEntry entries[] = {
         {"api-base", 0, 0, G_OPTION_ARG_STRING, &apiBase, "Trello API base URL (development)", "URL"},
         {"api-key", 0, 0, G_OPTION_ARG_STRING, &apiKey, "Trello API key", "KEY"},
@@ -138,6 +140,7 @@ int main(int argc, char** argv) {
         {"poll-seconds", 0, 0, G_OPTION_ARG_INT, &poll, "Seconds between live-update polls", "N"},
         {"snapshot", 0, 0, G_OPTION_ARG_FILENAME, &snapshot, "Render the window to this PNG and quit (development)", "FILE"},
         {"snapshot-delay", 0, 0, G_OPTION_ARG_INT, &snapshotDelay, "Milliseconds to wait before the snapshot", "MS"},
+        {"open-card", 0, 0, G_OPTION_ARG_STRING, &openCard, "Open this card id once the board shows (development)", "ID"},
         {nullptr, 0, 0, G_OPTION_ARG_NONE, nullptr, nullptr, nullptr},
     };
     g_application_add_main_option_entries(G_APPLICATION(gapp), entries);
@@ -150,6 +153,7 @@ int main(int argc, char** argv) {
                          a->options.pollSeconds = poll;
                          a->options.snapshot = snapshot ? snapshot : "";
                          a->options.snapshotDelayMs = snapshotDelay;
+                         a->options.openCard = openCard ? openCard : "";
                          a->dataDir = dataDir ? dataDir
                                               : (std::filesystem::path(g_get_user_data_dir()) / "cardinal").string();
                          return -1;

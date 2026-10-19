@@ -12,7 +12,7 @@ namespace cardinal::gtk {
 // Top-level window: shows the login page, a spinner, or the signed-in app depending on Session.
 class MainWindow {
 public:
-    MainWindow(AdwApplication* app, Session& session, std::string dataDir);
+    MainWindow(AdwApplication* app, Session& session, std::string dataDir, std::string openCardOnStart = "");
     ~MainWindow();
     GtkWindow* window() const { return GTK_WINDOW(window_); }
 
@@ -21,6 +21,7 @@ private:
 
     Session& session_;
     std::string dataDir_;
+    std::string openCardOnStart_;
     GtkWidget* window_;
     GtkWidget* stack_;
     std::unique_ptr<LoginPage> login_;

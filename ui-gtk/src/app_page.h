@@ -15,7 +15,8 @@ class CardPanel;
 // as a side sheet. Holds every view-model, so destroying it releases them all.
 class AppPage {
 public:
-    AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout);
+    AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout,
+            std::string openCardOnStart = "");
     ~AppPage();
     GtkWidget* widget() const { return root_; }
 
@@ -40,6 +41,7 @@ private:
     int statusConn_ = 0;
     int headerConn_ = 0;
     std::string currentBoardId_;
+    std::string openCardOnStart_;
     std::vector<std::string> boardIds_;
 
     GtkWidget* root_;
