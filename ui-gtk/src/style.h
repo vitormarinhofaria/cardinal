@@ -16,6 +16,7 @@ inline const char* kStyleCss = R"css(
   padding: 8px;
   min-width: 272px;
 }
+.column listview, .column scrolledwindow { background: transparent; }
 .column-title { font-weight: 800; }
 .column-count { opacity: .6; font-size: smaller; }
 .column-cold { padding: 24px 8px; }
@@ -30,6 +31,7 @@ inline const char* kStyleCss = R"css(
 .card-row:hover { background: mix(@card_bg_color, @accent_bg_color, .09); }
 .card-row.drop-target { box-shadow: 0 -3px 0 0 @accent_bg_color; }
 .card-meta { opacity: .7; font-size: smaller; }
+.card-row avatar { margin-left: 2px; }
 .add-card { padding: 4px 8px; }
 .column.drop-target { box-shadow: inset 0 0 0 2px @accent_bg_color; }
 

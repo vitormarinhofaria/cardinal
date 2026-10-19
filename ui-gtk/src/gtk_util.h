@@ -30,6 +30,28 @@ inline gulong onNotify(gpointer instance, const char* signal, Fn fn) {
 
 inline std::string str(const char* s) { return s ? s : ""; }
 
+// CARDINAL_TRACE=1 prints milliseconds since process start for the moments that matter to speed.
+inline gint64 processStartUs() {
+    static const gint64 start = g_get_monotonic_time();
+    return start;
+}
+inline void trace(const std::string& what) {
+    static const bool on = g_getenv("CARDINAL_TRACE") != nullptr;
+    if (!on) return;
+    g_printerr("[trace] %7.1f ms  %s\n", (g_get_monotonic_time() - processStartUs()) / 1000.0, what.c_str());
+}
+
+// Logs `what` once, right after the next frame was produced.
+inline void traceNextFrame(GtkWidget* widget, std::string what) {
+    gtk_widget_add_tick_callback(
+        widget,
+        [](GtkWidget*, GdkFrameClock*, gpointer data) -> gboolean {
+            trace(*static_cast<std::string*>(data));
+            return G_SOURCE_REMOVE;
+        },
+        new std::string(std::move(what)), [](gpointer d) { delete static_cast<std::string*>(d); });
+}
+
 inline void addClass(GtkWidget* w, const char* cls) { gtk_widget_add_css_class(w, cls); }
 
 inline GtkWidget* label(const std::string& text, const char* cssClass = nullptr, float xalign = 0) {

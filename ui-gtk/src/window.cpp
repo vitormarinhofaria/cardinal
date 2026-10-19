@@ -27,6 +27,30 @@ MainWindow::MainWindow(AdwApplication* app, Session& session, std::string dataDi
 
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(window_), stack_);
 
+    // CARDINAL_TRACE: every finished frame with the page it shows, to see real paint times.
+    gtk_widget_add_tick_callback(
+        window_,
+        [](GtkWidget*, GdkFrameClock* clock, gpointer data) -> gboolean {
+            static const bool on = g_getenv("CARDINAL_TRACE_FRAMES") != nullptr;
+            static int n = 0;
+            if (!on) return G_SOURCE_REMOVE;
+            static bool phases = false;
+            if (!phases) {
+                phases = true;
+                for (const char* sig : {"update", "layout", "paint", "after-paint"})
+                    g_signal_connect_data(
+                        clock, sig,
+                        G_CALLBACK(+[](GdkFrameClock*, gpointer d) { trace(std::string("   phase ") + static_cast<const char*>(d)); }),
+                        const_cast<char*>(sig), nullptr, G_CONNECT_DEFAULT);
+            }
+            auto* stack = GTK_STACK(data);
+            const char* page = gtk_stack_get_visible_child_name(stack);
+            trace("frame " + std::to_string(++n) + " page=" + (page ? page : "?") +
+                  " frame-time-ms=" + std::to_string(gdk_frame_clock_get_frame_time(clock) / 1000 % 100000));
+            return n < 40 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+        },
+        stack_, nullptr);
+
     connection_ = session_.state().changed.connect([this](const SessionState& s) { onSessionChanged(s); });
     onSessionChanged(session_.state().get());
 }
@@ -56,6 +80,7 @@ void MainWindow::onSessionChanged(const SessionState& state) {
             break;
         case Phase::Ready:
             if (!app_ && session_.model()) {
+                trace("session ready");
                 app_ = std::make_unique<AppPage>(*session_.model(), dataDir_,
                                                  [this] { session_.logout(); });
                 gtk_stack_add_named(GTK_STACK(stack_), app_->widget(), "app");

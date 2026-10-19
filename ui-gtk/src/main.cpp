@@ -7,6 +7,7 @@
 
 #include "cardinal/credentials.h"
 #include "cardinal/session.h"
+#include "gtk_util.h"
 #include "platform.h"
 #include "style.h"
 #include "window.h"
@@ -72,6 +73,7 @@ void saveWindowPng(GtkWindow* window, const std::string& path) {
 
 void activate(GApplication* gapp, gpointer data) {
     auto* app = static_cast<App*>(data);
+    cardinal::gtk::trace("activate");
     if (app->window) {
         gtk_window_present(app->window->window());
         return;
@@ -100,6 +102,8 @@ void activate(GApplication* gapp, gpointer data) {
     app->window = std::make_unique<cardinal::gtk::MainWindow>(ADW_APPLICATION(gapp), *app->session,
                                                               app->dataDir);
     gtk_window_present(app->window->window());
+    cardinal::gtk::trace("window presented");
+    cardinal::gtk::traceNextFrame(GTK_WIDGET(app->window->window()), "window: first frame (whatever it shows)");
 
     if (!o.snapshot.empty()) {
         g_timeout_add(static_cast<guint>(o.snapshotDelayMs), [](gpointer d) -> gboolean {
@@ -114,6 +118,7 @@ void activate(GApplication* gapp, gpointer data) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    cardinal::gtk::processStartUs();
     App app;
     adw_init();
     AdwApplication* gapp = adw_application_new("dev.cardinal.Cardinal", G_APPLICATION_DEFAULT_FLAGS);
