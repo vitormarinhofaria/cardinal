@@ -2,6 +2,8 @@
 
 #include <ctime>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -13,8 +15,7 @@ struct sqlite3;
 
 namespace cardinal {
 
-// SQLite-backed local cache. Not thread-safe: callers serialize access (one Store per thread, or
-// an external mutex).
+// SQLite-backed local cache. Every public method is safe to call from any thread.
 class Store {
 public:
     static Store open(const std::filesystem::path& path);
@@ -28,6 +29,24 @@ public:
     void upsertBoards(std::span<const Board> boards);
     void upsertLists(std::span<const List> lists);
     void upsertCards(std::span<const Card> cards);
+
+    // List fetches carry no description: update everything except `desc` of cards already cached.
+    void upsertCardSummaries(std::span<const Card> cards);
+
+    // Remove cached rows that the server no longer has. Return the ids of removed cards where
+    // cards are removed.
+    std::vector<std::string> pruneListCards(const std::string& listId,
+                                            std::span<const std::string> keepIds);
+    void pruneBoardLists(const std::string& boardId, std::span<const std::string> keepIds);
+    void pruneBoards(std::span<const std::string> keepIds);
+    void deleteCard(const std::string& cardId);
+
+    void replaceLabels(const std::string& boardId, std::span<const Label> labels);
+    void replaceMembers(const std::string& boardId, std::span<const Member> members);
+    void replaceComments(const std::string& cardId, std::span<const Comment> comments);
+    std::vector<Label> labels(const std::string& boardId);
+    std::vector<Member> members(const std::string& boardId);
+    std::vector<Comment> comments(const std::string& cardId);
 
     std::vector<Board> boards();
     std::vector<List> lists(const std::string& boardId);
@@ -43,6 +62,7 @@ public:
 private:
     explicit Store(sqlite3* db) : db_(db) {}
     sqlite3* db_ = nullptr;
+    std::unique_ptr<std::mutex> mu_ = std::make_unique<std::mutex>();
 };
 
 }  // namespace cardinal
