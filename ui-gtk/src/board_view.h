@@ -33,6 +33,10 @@ private:
     void rebuildStructure();
     void markVisibilityDirty();
     void attachVisibleColumns();
+    void fitColumns();
+    int fitHeight_ = 0;
+    bool panning_ = false;
+    double panStart_ = 0;
     void updateColumn(const std::string& listId);
     Column* ensureColumn(const std::string& listId);
 

@@ -210,6 +210,33 @@ BoardView::BoardView(std::shared_ptr<BoardVM> vm, std::function<void(const std::
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(root_), box_);
     addClass(root_, "board-area");
 
+    // Dragging the empty board background (or a column's own background) pans horizontally.
+    GtkGesture* pan = gtk_gesture_drag_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(pan), GDK_BUTTON_PRIMARY);
+    g_signal_connect_data(
+        pan, "drag-begin",
+        G_CALLBACK(+[](GtkGestureDrag* g, double x, double y, gpointer data) {
+            auto* self = static_cast<BoardView*>(data);
+            GtkWidget* hit = gtk_widget_pick(self->root_, x, y, GTK_PICK_DEFAULT);
+            const bool background = hit == self->root_ || hit == self->box_ || hit == gtk_widget_get_parent(self->box_) ||
+                                    (hit && gtk_widget_has_css_class(hit, "column"));
+            self->panning_ = background;
+            self->panStart_ = gtk_adjustment_get_value(
+                gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->root_)));
+            if (!background) gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_DENIED);
+        }),
+        this, nullptr, G_CONNECT_DEFAULT);
+    g_signal_connect_data(
+        pan, "drag-update",
+        G_CALLBACK(+[](GtkGestureDrag*, double dx, double, gpointer data) {
+            auto* self = static_cast<BoardView*>(data);
+            if (!self->panning_) return;
+            gtk_adjustment_set_value(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->root_)),
+                                     self->panStart_ - dx);
+        }),
+        this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(root_, GTK_EVENT_CONTROLLER(pan));
+
     GtkAdjustment* h = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(root_));
     on(h, "value-changed", [this] {
         // While the panel animates away, undo any reset right where it happens, before a frame is drawn.
@@ -230,6 +257,17 @@ BoardView::BoardView(std::shared_ptr<BoardVM> vm, std::function<void(const std::
         }
         markVisibilityDirty();
     });
+    // Columns are as tall as their cards; the scroller's cap follows the board's height.
+    gtk_widget_add_tick_callback(
+        root_,
+        +[](GtkWidget* w, GdkFrameClock*, gpointer data) -> gboolean {
+            auto* self = static_cast<BoardView*>(data);
+            const int h = gtk_widget_get_height(w);
+            self->fitHeight_ = h;
+            self->fitColumns();
+            return G_SOURCE_CONTINUE;
+        },
+        this, nullptr);
     structureConn_ = vm_->structureChanged.connect([this] { rebuildStructure(); });
     columnConn_ = vm_->columnChanged.connect([this](const std::string& id) { updateColumn(id); });
     rebuildStructure();
@@ -274,6 +312,7 @@ BoardView::Column* BoardView::ensureColumn(const std::string& listId) {
     addClass(c->root, "column");
     gtk_widget_set_size_request(c->root, 288, -1);
     gtk_widget_set_hexpand(c->root, FALSE);
+    gtk_widget_set_valign(c->root, GTK_ALIGN_START);  // only as tall as its cards, capped by fitColumns()
     g_object_set_data_full(G_OBJECT(c->root), "column", c, [](gpointer p) {
         auto* col = static_cast<Column*>(p);
         if (col->selection) g_object_unref(col->selection);
@@ -328,7 +367,7 @@ BoardView::Column* BoardView::ensureColumn(const std::string& listId) {
         }
     });
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), c->listView);
-    gtk_widget_set_vexpand(scroller, TRUE);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroller), 60);
 
     GtkWidget* cold = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     addClass(cold, "column-cold");
@@ -342,7 +381,7 @@ BoardView::Column* BoardView::ensureColumn(const std::string& listId) {
     gtk_box_append(GTK_BOX(cold), load);
 
     c->stack = gtk_stack_new();
-    gtk_widget_set_vexpand(c->stack, TRUE);
+    gtk_stack_set_vhomogeneous(GTK_STACK(c->stack), FALSE);
     gtk_stack_add_named(GTK_STACK(c->stack), scroller, "cards");
     gtk_stack_add_named(GTK_STACK(c->stack), cold, "cold");
     gtk_box_append(GTK_BOX(c->root), c->stack);
@@ -445,6 +484,21 @@ void BoardView::attachVisibleColumns() {
         if (b.origin.x + b.size.width < -300 || b.origin.x > viewport + 300) continue;
         c->attached = true;
         gtk_list_view_set_model(GTK_LIST_VIEW(c->listView), c->selection);
+    }
+}
+
+void BoardView::fitColumns() {
+    for (auto& [id, c] : columns_) {
+        // board margins (24) + column padding (16) + two gaps (12) + header and "add card" row
+        const int chrome = 24 + 16 + 12 + gtk_widget_get_height(gtk_widget_get_first_child(c->root)) +
+                           gtk_widget_get_height(c->addStack);
+        // The list view's natural height is not meaningful, but its adjustment's upper bound is the
+        // height of the rows (estimated for the unrealized ones): size the scroller to that.
+        const int cap = std::max(100, fitHeight_ - chrome);
+        GtkAdjustment* vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(c->scroller));
+        const int content = static_cast<int>(gtk_adjustment_get_upper(vadj));
+        gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(c->scroller),
+                                                   std::clamp(content, 0, cap));
     }
 }
 
