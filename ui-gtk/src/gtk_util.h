@@ -65,6 +65,10 @@ inline void clearChildren(GtkWidget* box) {
     while (GtkWidget* c = gtk_widget_get_first_child(box)) gtk_box_remove(GTK_BOX(box), c);
 }
 
+inline void clearFlowBox(GtkWidget* flow) {
+    while (GtkWidget* c = gtk_widget_get_first_child(flow)) gtk_flow_box_remove(GTK_FLOW_BOX(flow), c);
+}
+
 // Trello label color names -> CSS classes defined in style.css
 inline std::string labelClass(const std::string& color) {
     return "lbl-" + (color.empty() ? std::string("none") : color);

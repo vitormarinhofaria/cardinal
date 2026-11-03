@@ -519,7 +519,7 @@ void CardPanel::updateLabels(const CardPanelState& s) {
     const bool appliedChanged = s.labels != shownLabels_;
     if (appliedChanged) {
         shownLabels_ = s.labels;
-        while (GtkWidget* c = gtk_widget_get_first_child(labelsBox_)) gtk_flow_box_remove(GTK_FLOW_BOX(labelsBox_), c);
+        clearFlowBox(labelsBox_);
         for (const auto& l : s.labels) gtk_flow_box_append(GTK_FLOW_BOX(labelsBox_), chip(l));
     }
     // the picker offers only labels not yet on the card, so it follows both lists

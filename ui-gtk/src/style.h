@@ -35,7 +35,10 @@ inline const char* kStyleCss = R"css(
 .add-card { padding: 4px 8px; }
 .column.drop-target { box-shadow: inset 0 0 0 2px @accent_bg_color; }
 
-.label-bar { border-radius: 4px; min-height: 8px; min-width: 40px; }
+.card-label { border-radius: 4px; padding: 0 6px; min-height: 16px;
+              color: white; font-weight: 700; font-size: 0.75em; }
+.card-label-empty { min-width: 40px; padding: 0; }
+.card-row flowboxchild { padding: 0; min-width: 0; min-height: 0; }
 .label-chip { border-radius: 4px; padding: 1px 8px; color: white; font-weight: 700; font-size: smaller; }
 .lbl-green  { background: #61bd4f; } .lbl-yellow { background: #c9ad00; color: #1d2125; }
 .lbl-orange { background: #e88d00; } .lbl-red    { background: #eb5a46; }

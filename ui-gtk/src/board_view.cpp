@@ -81,7 +81,17 @@ void setupCard(GtkListItemFactory*, GtkListItem* item, gpointer ctx) {
 
     GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     addClass(card, "card-row");
-    w->labels = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    // label chips with their names; wrap to more lines when they don't fit the column
+    w->labels = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(w->labels), GTK_SELECTION_NONE);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(w->labels), 20);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(w->labels), 4);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(w->labels), 4);
+    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(w->labels), FALSE);
+    gtk_widget_set_halign(w->labels, GTK_ALIGN_START);
+    // clicks and drags go to the card, not to the flow box children
+    gtk_widget_set_can_target(w->labels, FALSE);
+    gtk_widget_set_can_focus(w->labels, FALSE);
     gtk_box_append(GTK_BOX(card), w->labels);
 
     w->title = gtk_label_new("");
@@ -172,13 +182,19 @@ void bindCard(GtkListItemFactory*, GtkListItem* item, gpointer) {
     w->item = item;
     w->cardId = row->id;
 
-    clearChildren(w->labels);
+    clearFlowBox(w->labels);
     for (const auto& l : row->labels) {
-        GtkWidget* bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-        addClass(bar, "label-bar");
-        addClass(bar, labelClass(l.color).c_str());
-        gtk_widget_set_tooltip_text(bar, l.name.c_str());
-        gtk_box_append(GTK_BOX(w->labels), bar);
+        GtkWidget* chip = gtk_label_new(l.name.c_str());
+        addClass(chip, "card-label");
+        addClass(chip, labelClass(l.color).c_str());
+        if (l.name.empty()) {
+            addClass(chip, "card-label-empty");  // color-only label, as Trello allows
+        } else {
+            gtk_label_set_ellipsize(GTK_LABEL(chip), PANGO_ELLIPSIZE_END);
+            gtk_label_set_max_width_chars(GTK_LABEL(chip), 18);
+        }
+        gtk_widget_set_can_focus(chip, FALSE);
+        gtk_flow_box_append(GTK_FLOW_BOX(w->labels), chip);
     }
     gtk_widget_set_visible(w->labels, !row->labels.empty());
     gtk_label_set_text(GTK_LABEL(w->title), row->title.c_str());
