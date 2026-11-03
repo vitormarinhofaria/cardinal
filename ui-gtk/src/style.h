@@ -55,6 +55,7 @@ inline const char* kStyleCss = R"css(
 .lbl-black_light  { background: #dcdfe4; color: #1d2125; } .lbl-black_dark  { background: #44546f; }
 
 .card-title { font-size: 1.4em; font-weight: 800; }
+.title-edit { background: @card_bg_color; border-radius: 6px; padding: 2px 4px; }
 .card-col > .section-title:first-child { margin-top: 0; }
 .section-title { font-weight: 800; opacity: .8; margin-top: 6px; }
 .comment-sending { opacity: .55; }

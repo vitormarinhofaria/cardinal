@@ -23,6 +23,8 @@ public:
 
     // GTK callbacks reach in here.
     void commitTitle();
+    void startTitleEdit();
+    void finishTitleEdit(bool commit);
     void sendComment();
     void saveDescription();
     void revertDescription();
@@ -50,7 +52,11 @@ private:
     GtkWidget* root_;
     GtkWidget* stack_;
     GtkWidget* banner_;
-    GtkWidget* title_;
+    GtkWidget* title_;  // stack: wrapping label, or a wrapping text view while editing
+    GtkWidget* titleLabel_;
+    GtkWidget* titleView_;
+    GtkTextBuffer* titleBuffer_;
+    bool editingTitle_ = false;
     GtkWidget* listName_;
     GtkWidget* labelsBox_;
     GtkWidget* addLabelButton_;
@@ -71,6 +77,7 @@ private:
     GtkWidget* content_;
     GtkWidget* columns_;
     GtkWidget* main_;   // description, checklists, attachments, comments
+    GtkWidget* mainClamp_;  // caps main_'s width so long text can't squeeze side_
     GtkWidget* side_;   // labels, members
 
     // what is currently shown, to rebuild only what changed

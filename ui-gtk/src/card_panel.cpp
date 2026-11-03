@@ -61,7 +61,9 @@ GtkWidget* textArea(GtkTextBuffer** bufferOut, int minHeight) {
     gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), minHeight);
     gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 320);
     gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    // EXTERNAL, not NEVER: with NEVER the scroller asks for the text's unwrapped width, and a long
+    // description pushes the side column out. EXTERNAL makes the view wrap to whatever it gets.
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC);
     g_object_set_data(G_OBJECT(scroll), "view", view);
     return scroll;
 }
@@ -100,15 +102,64 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_widget_set_margin_bottom(header, 4);
     gtk_widget_set_margin_start(header, 20);
     gtk_widget_set_margin_end(header, 10);
-    title_ = gtk_editable_label_new("");
+    // The title wraps so a long one is read in full and never widens the dialog (a
+    // GtkEditableLabel is single-line: its minimum width is the whole title). Click to edit it
+    // in a wrapping text view; Enter or leaving saves, Esc cancels.
+    titleLabel_ = gtk_label_new("");
+    gtk_label_set_wrap(GTK_LABEL(titleLabel_), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(titleLabel_), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_xalign(GTK_LABEL(titleLabel_), 0);
+    gtk_widget_set_focusable(titleLabel_, TRUE);
+    gtk_widget_set_tooltip_text(titleLabel_, "Clique para editar o título");
+    addClass(titleLabel_, "card-title");
+    GtkGesture* titleClick = gtk_gesture_click_new();
+    g_signal_connect_data(titleClick, "released", G_CALLBACK(+[](GtkGestureClick*, int, double, double, gpointer d) {
+        static_cast<CardPanel*>(d)->startTitleEdit();
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(titleLabel_, GTK_EVENT_CONTROLLER(titleClick));
+    GtkEventController* titleLabelKeys = gtk_event_controller_key_new();
+    g_signal_connect_data(
+        titleLabelKeys, "key-pressed",
+        G_CALLBACK(+[](GtkEventControllerKey*, guint keyval, guint, GdkModifierType, gpointer data) -> gboolean {
+            if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_F2) return FALSE;
+            static_cast<CardPanel*>(data)->startTitleEdit();
+            return TRUE;
+        }),
+        this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(titleLabel_, titleLabelKeys);
+
+    titleView_ = gtk_text_view_new();
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(titleView_), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(titleView_), FALSE);
+    addClass(titleView_, "card-title");
+    addClass(titleView_, "title-edit");
+    titleBuffer_ = gtk_text_view_get_buffer(GTK_TEXT_VIEW(titleView_));
+    GtkEventController* titleKeys = gtk_event_controller_key_new();
+    g_signal_connect_data(
+        titleKeys, "key-pressed",
+        G_CALLBACK(+[](GtkEventControllerKey*, guint keyval, guint, GdkModifierType, gpointer data) -> gboolean {
+            auto* self = static_cast<CardPanel*>(data);
+            if (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter) {
+                self->finishTitleEdit(true);  // titles are one line: Enter saves
+                return TRUE;
+            }
+            if (keyval == GDK_KEY_Escape) {
+                self->finishTitleEdit(false);
+                return TRUE;
+            }
+            return FALSE;
+        }),
+        this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(titleView_, titleKeys);
+    GtkEventController* titleFocus = gtk_event_controller_focus_new();
+    on(titleFocus, "leave", [this] { if (editingTitle_) finishTitleEdit(true); });
+    gtk_widget_add_controller(titleView_, titleFocus);
+
+    title_ = gtk_stack_new();
+    gtk_stack_add_named(GTK_STACK(title_), titleLabel_, "show");
+    gtk_stack_add_named(GTK_STACK(title_), titleView_, "edit");
+    gtk_stack_set_vhomogeneous(GTK_STACK(title_), FALSE);
     gtk_widget_set_hexpand(title_, TRUE);
-    addClass(title_, "card-title");
-    onNotify(title_, "notify::editing", [this] {
-        if (gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)))
-            titleBase_ = shownTitle_;  // what the user was looking at when they began
-        else
-            commitTitle();
-    });
     GtkWidget* close = gtk_button_new_from_icon_name("window-close-symbolic");
     addClass(close, "flat");
     addClass(close, "circular");
@@ -138,11 +189,17 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     columns_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
     main_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_hexpand(main_, TRUE);
+    mainClamp_ = adw_clamp_new();
+    adw_clamp_set_maximum_size(ADW_CLAMP(mainClamp_), 560);
+    adw_clamp_set_tightening_threshold(ADW_CLAMP(mainClamp_), 560);
+    adw_clamp_set_child(ADW_CLAMP(mainClamp_), main_);
+    gtk_widget_set_hexpand(mainClamp_, TRUE);
     side_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_size_request(side_, 200, -1);
+    gtk_widget_set_hexpand(side_, FALSE);
     addClass(main_, "card-col");
     addClass(side_, "card-col");
-    gtk_box_append(GTK_BOX(columns_), main_);
+    gtk_box_append(GTK_BOX(columns_), mainClamp_);
     gtk_box_append(GTK_BOX(columns_), side_);
     gtk_box_append(GTK_BOX(content_), columns_);
 
@@ -278,7 +335,28 @@ CardPanel::~CardPanel() {
     g_object_unref(root_);
 }
 
-bool CardPanel::editingTitle() const { return gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)); }
+bool CardPanel::editingTitle() const { return editingTitle_; }
+
+void CardPanel::startTitleEdit() {
+    if (editingTitle_ || !gtk_widget_is_sensitive(content_)) return;
+    editingTitle_ = true;
+    titleBase_ = shownTitle_;  // what the user was looking at when they began
+    gtk_text_buffer_set_text(titleBuffer_, shownTitle_.c_str(), -1);
+    gtk_stack_set_visible_child_name(GTK_STACK(title_), "edit");
+    gtk_widget_grab_focus(titleView_);
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(titleBuffer_, &start, &end);
+    gtk_text_buffer_select_range(titleBuffer_, &start, &end);
+}
+
+void CardPanel::finishTitleEdit(bool commit) {
+    if (!editingTitle_) return;
+    editingTitle_ = false;  // first: switching the stack moves the focus and re-enters here
+    if (commit) commitTitle();
+    gtk_label_set_text(GTK_LABEL(titleLabel_), shownTitle_.c_str());
+    gtk_stack_set_visible_child_name(GTK_STACK(title_), "show");
+    gtk_widget_grab_focus(titleLabel_);
+}
 
 void CardPanel::setNarrow(bool narrow) {
     gtk_orientable_set_orientation(GTK_ORIENTABLE(columns_),
@@ -287,7 +365,7 @@ void CardPanel::setNarrow(bool narrow) {
     if (narrow)
         gtk_box_reorder_child_after(GTK_BOX(columns_), side_, nullptr);
     else
-        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, main_);
+        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, mainClamp_);
 }
 
 std::string CardPanel::descriptionText() const { return textOf(descBuffer_); }
@@ -299,11 +377,9 @@ void CardPanel::setDescriptionText(const std::string& text) {
 }
 
 void CardPanel::commitTitle() {
-    const std::string text = trimmed(str(gtk_editable_get_text(GTK_EDITABLE(title_))));
-    if (text.empty() || text == shownTitle_) {
-        gtk_editable_set_text(GTK_EDITABLE(title_), shownTitle_.c_str());
-        return;
-    }
+    std::string text = trimmed(textOf(titleBuffer_));
+    std::replace(text.begin(), text.end(), '\n', ' ');  // pasted line breaks: titles are one line
+    if (text.empty() || text == shownTitle_) return;
     vm_->setTitle(text, titleBase_.empty() ? shownTitle_ : titleBase_);
 }
 
@@ -340,7 +416,7 @@ void CardPanel::selfTestDraft() {
 }
 
 void CardPanel::selfTest() {
-    gtk_editable_set_text(GTK_EDITABLE(title_), "Título editado pelo autoteste");
+    gtk_text_buffer_set_text(titleBuffer_, "Título editado pelo autoteste", -1);
     commitTitle();
     gtk_text_buffer_set_text(descBuffer_, "Descrição editada pelo autoteste ☕", -1);
     saveDescription();
@@ -358,6 +434,7 @@ void CardPanel::sendComment() {
     vm_->addComment(text);
     gtk_text_buffer_set_text(commentBuffer_, "", -1);
 }
+
 
 void CardPanel::update(const CardPanelState& s) {
     using Status = CardPanelState::Status;
@@ -380,8 +457,7 @@ void CardPanel::update(const CardPanelState& s) {
 
     if (s.title != shownTitle_) {
         shownTitle_ = s.title;
-        if (!gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)))
-            gtk_editable_set_text(GTK_EDITABLE(title_), s.title.c_str());
+        if (!editingTitle_) gtk_label_set_text(GTK_LABEL(titleLabel_), s.title.c_str());
     }
     gtk_label_set_text(GTK_LABEL(listName_), s.listName.empty() ? "" : ("na lista " + s.listName).c_str());
     gtk_widget_set_visible(listName_, !s.listName.empty());
@@ -535,7 +611,12 @@ void CardPanel::updateExtras(const CardPanelState& s) {
         for (const auto& list : s.checklists) {
             gtk_box_append(GTK_BOX(checklistsBox_), section(list.name.c_str()));
             for (const auto& item : list.items) {
-                GtkWidget* check = gtk_check_button_new_with_label(item.name.c_str());
+                GtkWidget* check = gtk_check_button_new();
+                GtkWidget* text = gtk_label_new(item.name.c_str());
+                gtk_label_set_wrap(GTK_LABEL(text), TRUE);
+                gtk_label_set_wrap_mode(GTK_LABEL(text), PANGO_WRAP_WORD_CHAR);
+                gtk_label_set_xalign(GTK_LABEL(text), 0);
+                gtk_check_button_set_child(GTK_CHECK_BUTTON(check), text);
                 gtk_check_button_set_active(GTK_CHECK_BUTTON(check), item.done);
                 gtk_widget_set_sensitive(check, FALSE);  // read-only in v1
                 gtk_box_append(GTK_BOX(checklistsBox_), check);
@@ -552,6 +633,8 @@ void CardPanel::updateExtras(const CardPanelState& s) {
             const bool web = a.url.rfind("https://", 0) == 0 || a.url.rfind("http://", 0) == 0;
             GtkWidget* link = web ? gtk_link_button_new_with_label(a.url.c_str(), text.c_str())
                                   : label(text);
+            GtkWidget* text_label = web ? gtk_button_get_child(GTK_BUTTON(link)) : link;
+            if (GTK_IS_LABEL(text_label)) gtk_label_set_ellipsize(GTK_LABEL(text_label), PANGO_ELLIPSIZE_MIDDLE);
             gtk_widget_set_halign(link, GTK_ALIGN_START);
             gtk_box_append(GTK_BOX(attachmentsBox_), link);
         }
