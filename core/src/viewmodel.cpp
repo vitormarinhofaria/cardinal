@@ -1,5 +1,7 @@
 #include "cardinal/viewmodel.h"
 
+#include "cardinal/image_refs.h"
+
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -587,6 +589,7 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
             s.cardId = id;
             s.title = card->name;
             s.description = card->desc;
+            s.descriptionImages = imageUrlsIn(card->desc);
 
             std::map<std::string, LabelChip> labelById;
             std::map<std::string, MemberChip> memberById;
@@ -605,7 +608,7 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
             for (const auto& mid : card->memberIds)
                 if (memberById.count(mid)) s.members.push_back(memberById[mid]);
             for (const auto& c : engine.comments(id)) {
-                CommentRow row{c.id, "", "", c.text, c.date, isTemp(c.id)};
+                CommentRow row{c.id, "", "", c.text, c.date, isTemp(c.id), imageUrlsIn(c.text)};
                 auto it = memberById.find(c.authorId);
                 if (it != memberById.end()) {
                     row.authorName = it->second.fullName;
@@ -617,6 +620,8 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
                 s.extrasLoaded = true;
                 s.checklists = extras->checklists;
                 s.attachments = extras->attachments;
+            } else {
+                s.attachments = engine.cachedAttachments(id);  // pictures can start loading now
             }
             s.notices = noticesNow;
         } else {

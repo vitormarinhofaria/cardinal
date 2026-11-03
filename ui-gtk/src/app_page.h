@@ -5,6 +5,7 @@
 
 #include "cardinal/viewmodel.h"
 #include "gtk_util.h"
+#include "image_loader.h"
 
 namespace cardinal::gtk {
 
@@ -15,7 +16,7 @@ class CardPanel;
 // as a dialog over it (like Trello's card modal). Holds every view-model, so destroying it releases them all.
 class AppPage {
 public:
-    AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout,
+    AppPage(AppModel& model, ImageCache* images, std::string dataDir, std::function<void()> onLogout,
             std::string openCardOnStart = "");
     ~AppPage();
     GtkWidget* widget() const { return root_; }
@@ -32,6 +33,7 @@ private:
     void rememberBoard(const std::string& id) const;
 
     AppModel& model_;
+    ImageLoader images_;  // outlives every card panel: decoded pictures stay for the next card
     std::string dataDir_;
     std::function<void()> onLogout_;
 

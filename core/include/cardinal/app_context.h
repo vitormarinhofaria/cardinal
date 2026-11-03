@@ -9,6 +9,7 @@
 #include "cardinal/event_source.h"
 #include "cardinal/executor.h"
 #include "cardinal/http.h"
+#include "cardinal/image_cache.h"
 #include "cardinal/scheduler.h"
 #include "cardinal/store.h"
 #include "cardinal/sync.h"
@@ -41,11 +42,14 @@ public:
 
     AppModel& model() { return *model_; }
     Store& store() { return *store_; }
+    ImageCache& images() { return *images_; }
 
 private:
     // Declaration order is destruction order in reverse: model first, store last.
     std::unique_ptr<Store> store_;
     std::unique_ptr<HttpClient> http_;
+    std::unique_ptr<HttpClient> imageHttp_;  // own transfers: big downloads never delay the API
+    std::unique_ptr<ImageCache> images_;
     SystemClock clock_;
     std::unique_ptr<Scheduler> scheduler_;
     std::unique_ptr<TrelloApi> api_;

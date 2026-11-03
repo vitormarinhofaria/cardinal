@@ -18,8 +18,15 @@ struct GlobalCurl {
     ~GlobalCurl() { curl_global_cleanup(); }
 };
 
+struct Sink {
+    std::string body;
+    size_t limit = 0;  // 0 = none
+};
+
 size_t collect(char* data, size_t size, size_t n, void* out) {
-    static_cast<std::string*>(out)->append(data, size * n);
+    auto* sink = static_cast<Sink*>(out);
+    if (sink->limit && sink->body.size() + size * n > sink->limit) return 0;  // aborts the transfer
+    sink->body.append(data, size * n);
     return size * n;
 }
 
@@ -49,7 +56,34 @@ public:
     }
 
     std::future<HttpResponse> request(Method method, std::string url, std::string body) override {
-        Task task{method, std::move(url), std::move(body), {}};
+        Task task;
+        task.method = method;
+        task.url = std::move(url);
+        task.body = std::move(body);
+        return enqueue(std::move(task));
+    }
+
+    std::future<HttpResponse> download(Download d) override {
+        Task task;
+        task.url = std::move(d.url);
+        task.headers = std::move(d.headers);
+        task.maxBytes = d.maxBytes;
+        task.isDownload = true;
+        return enqueue(std::move(task));
+    }
+
+private:
+    struct Task {
+        Method method = Method::Get;
+        std::string url;
+        std::string body;
+        std::vector<std::string> headers;
+        long maxBytes = 0;
+        bool isDownload = false;
+        std::promise<HttpResponse> promise;
+    };
+
+    std::future<HttpResponse> enqueue(Task task) {
         auto future = task.promise.get_future();
         {
             std::lock_guard lk(mutex_);
@@ -62,14 +96,6 @@ public:
         wake_.notify_one();
         return future;
     }
-
-private:
-    struct Task {
-        Method method;
-        std::string url;
-        std::string body;
-        std::promise<HttpResponse> promise;
-    };
 
     // Each worker owns one easy handle, so connections are reused (keep-alive, HTTP/2).
     void work() {
@@ -92,12 +118,25 @@ private:
 
     void perform(CURLM* multi, CURL* curl, Task& task) {
         curl_easy_reset(curl);
-        std::string out;
+        Sink out;
+        out.limit = static_cast<size_t>(task.maxBytes);
         curl_easy_setopt(curl, CURLOPT_URL, task.url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &out);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, task.isDownload ? 120L : 30L);
+        curl_slist* headers = nullptr;
+        for (const auto& h : task.headers) headers = curl_slist_append(headers, h.c_str());
+        if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        if (task.isDownload) {
+            // Attachments redirect to storage. libcurl drops a custom Authorization header when a
+            // redirect leaves the original host, so the token never reaches a third party.
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
+            curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+            curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+            if (task.maxBytes) curl_easy_setopt(curl, CURLOPT_MAXFILESIZE, task.maxBytes);
+        }
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
         curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS);
@@ -138,6 +177,8 @@ private:
                 if (m->msg == CURLMSG_DONE && m->easy_handle == curl) rc = m->data.result;
         }
         curl_multi_remove_handle(multi, curl);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, nullptr);
+        curl_slist_free_all(headers);
         if (aborted) {
             task.promise.set_exception(std::make_exception_ptr(std::runtime_error("http: shutting down")));
             return;
@@ -149,7 +190,7 @@ private:
         }
         long status = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-        task.promise.set_value({static_cast<int>(status), std::move(out)});
+        task.promise.set_value({static_cast<int>(status), std::move(out.body)});
     }
 
     std::mutex mutex_;

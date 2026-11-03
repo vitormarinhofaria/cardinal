@@ -44,6 +44,7 @@ public:
 
     Observable<SessionState>& state() { return state_; }
     AppModel* model() { return context_ ? &context_->model() : nullptr; }
+    ImageCache* images() { return context_ ? &context_->images() : nullptr; }
 
     void startLogin();                          // browser authorization
     void cancelLogin();

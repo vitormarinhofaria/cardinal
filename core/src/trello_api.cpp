@@ -187,7 +187,7 @@ std::future<CardExtras> TrelloApi::cardExtras(const std::string& cardId) {
                                        {"checklists", "all"},
                                        {"checklist_fields", "name"},
                                        {"attachments", "true"},
-                                       {"attachment_fields", "name,url"},
+                                       {"attachment_fields", "name,url,mimeType,isUpload,previews"},
                                        {"members", "true"},
                                        {"member_fields", "fullName,initials"}})),
                 [](const json& j) {

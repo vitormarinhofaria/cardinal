@@ -81,7 +81,36 @@ Checklist parseChecklist(const json& j) {
 }
 
 Attachment parseAttachment(const json& j) {
-    return {str(j, "id"), str(j, "name"), str(j, "url")};
+    Attachment a;
+    a.id = str(j, "id");
+    a.name = str(j, "name");
+    a.url = str(j, "url");
+    a.mimeType = str(j, "mimeType");
+    a.isUpload = j.value("isUpload", false);
+    // Trello makes several scaled copies; a thumbnail needs the smallest one that is still sharp
+    // at twice its size, or else the biggest there is.
+    constexpr int kWanted = 480;
+    const json* best = nullptr;
+    auto previews = j.find("previews");
+    if (previews != j.end() && previews->is_array()) {
+        for (const auto& p : *previews) {
+            if (!p.is_object() || str(p, "url").empty()) continue;
+            const double w = num(p, "width");
+            if (!best) {
+                best = &p;
+                continue;
+            }
+            const double bw = num(*best, "width");
+            const bool fits = w >= kWanted, bestFits = bw >= kWanted;
+            if ((fits && (!bestFits || w < bw)) || (!fits && !bestFits && w > bw)) best = &p;
+        }
+    }
+    if (best) {
+        a.previewUrl = str(*best, "url");
+        a.previewWidth = static_cast<int>(num(*best, "width"));
+        a.previewHeight = static_cast<int>(num(*best, "height"));
+    }
+    return a;
 }
 
 Action parseAction(const json& j) {

@@ -82,7 +82,7 @@ void MainWindow::onSessionChanged(const SessionState& state) {
         case Phase::Ready:
             if (!app_ && session_.model()) {
                 trace("session ready");
-                app_ = std::make_unique<AppPage>(*session_.model(), dataDir_,
+                app_ = std::make_unique<AppPage>(*session_.model(), session_.images(), dataDir_,
                                                  [this] { session_.logout(); }, openCardOnStart_);
                 gtk_stack_add_named(GTK_STACK(stack_), app_->widget(), "app");
                 gtk_stack_set_visible_child_name(GTK_STACK(stack_), "app");

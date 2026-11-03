@@ -712,3 +712,38 @@ TEST_F(VmTest, RejectedWritesAreCountedForABoardLevelNotice) {
     pump();
     EXPECT_EQ(app->status().get().rejections, 2);  // the same failure again is a new notice
 }
+
+TEST_F(VmTest, CardPanelShowsCachedAttachmentsAndPicturesInTextBeforeTheNetwork) {
+    std::vector<Card> cached{card("c1", "l1", "Corrigir login", 1,
+                                  "tela:\n![print.png](https://trello.com/1/cards/c1/attachments/a/download/print.png)")};
+    store->upsertCards(cached);
+    std::vector<List> lists{{"l1", "b1", "A fazer", 1, 2}};
+    store->upsertLists(lists);
+    store->replaceComments("c1", std::vector<Comment>{{"a0", "m1", "olha https://x.com/erro.jpg", "d"}});
+    Attachment at;
+    at.id = "at9";
+    at.name = "foto.png";
+    at.url = "https://trello.com/foto.png";
+    store->replaceAttachments("c1", std::vector<Attachment>{at});
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    req.calls.clear();
+
+    auto panel = app->openCard("c1");
+    exec.runOne();  // only the cache job
+    ui.runAll();
+    const auto& s = panel->state().get();
+    EXPECT_FALSE(s.extrasLoaded);
+    ASSERT_EQ(s.attachments.size(), 1u);
+    EXPECT_EQ(s.attachments[0].name, "foto.png");
+    EXPECT_EQ(s.descriptionImages,
+              std::vector<std::string>{"https://trello.com/1/cards/c1/attachments/a/download/print.png"});
+    ASSERT_EQ(s.comments.size(), 1u);
+    EXPECT_EQ(s.comments[0].images, std::vector<std::string>{"https://x.com/erro.jpg"});
+
+    pump();  // the network answers: extras replace the cached attachments, and are kept
+    EXPECT_TRUE(panel->state().get().extrasLoaded);
+    EXPECT_EQ(panel->state().get().attachments[0].name, "spec.pdf");
+    EXPECT_EQ(store->attachments("c1")[0].name, "spec.pdf");
+}

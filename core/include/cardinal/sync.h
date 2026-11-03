@@ -78,6 +78,8 @@ public:
     std::vector<Label> labels(const std::string& boardId);
     std::vector<Member> members(const std::string& boardId);
     std::optional<CardExtras> extras(const std::string& cardId);
+    // The attachments last seen for the card (kept on disk), for before extras() has them.
+    std::vector<Attachment> cachedAttachments(const std::string& cardId);
 
 private:
     struct Impl;

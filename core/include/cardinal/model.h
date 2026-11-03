@@ -91,6 +91,11 @@ struct Attachment {
     std::string id;
     std::string name;
     std::string url;
+    std::string mimeType;
+    bool isUpload = false;    // stored by Trello (its downloads need the OAuth header)
+    std::string previewUrl;   // a scaled-down version Trello made, empty when there is none
+    int previewWidth = 0;
+    int previewHeight = 0;
     bool operator==(const Attachment&) const = default;
 };
 

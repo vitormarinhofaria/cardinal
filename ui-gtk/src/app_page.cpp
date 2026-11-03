@@ -8,9 +8,10 @@
 
 namespace cardinal::gtk {
 
-AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout,
+AppPage::AppPage(AppModel& model, ImageCache* images, std::string dataDir, std::function<void()> onLogout,
                  std::string openCardOnStart)
     : model_(model),
+      images_(images),
       dataDir_(std::move(dataDir)),
       onLogout_(std::move(onLogout)),
       openCardOnStart_(std::move(openCardOnStart)) {
@@ -214,7 +215,7 @@ void AppPage::openCard(const std::string& cardId) {
         onDialogClosed();
     }
     auto vm = model_.openCard(cardId);
-    panel_ = std::make_unique<CardPanel>(vm, [this] { closeCard(); });
+    panel_ = std::make_unique<CardPanel>(vm, &images_, [this] { closeCard(); });
 
     dialog_ = GTK_WIDGET(adw_dialog_new());
     adw_dialog_set_child(ADW_DIALOG(dialog_), panel_->widget());

@@ -10,7 +10,7 @@
 namespace cardinal {
 namespace {
 
-constexpr int kSchemaVersion = 3;
+constexpr int kSchemaVersion = 4;
 
 [[noreturn]] void fail(sqlite3* db, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + sqlite3_errmsg(db));
@@ -125,6 +125,16 @@ void migrate(sqlite3* db) {
         // cards_loaded: the list's cards were fetched at least once (even if there were none)
         exec(db, "ALTER TABLE lists ADD COLUMN cards_loaded INTEGER NOT NULL DEFAULT 0");
     }
+    if (version < 4) {
+        // the card's attachments, so they (and their cached pictures) show before the network
+        exec(db, R"sql(
+            CREATE TABLE IF NOT EXISTS attachments(
+                card_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
+                mime TEXT NOT NULL, is_upload INTEGER NOT NULL, preview_url TEXT NOT NULL,
+                preview_w INTEGER NOT NULL, preview_h INTEGER NOT NULL, ord INTEGER NOT NULL,
+                PRIMARY KEY(card_id, id));
+        )sql");
+    }
     exec(db, ("PRAGMA user_version = " + std::to_string(kSchemaVersion)).c_str());
     tx.commit();
 }
@@ -166,6 +176,9 @@ void deleteCardRows(sqlite3* db, const std::string& cardId) {
     Stmt m(db, "DELETE FROM comments WHERE card_id = ?");
     m.text(1, cardId);
     m.run();
+    Stmt a(db, "DELETE FROM attachments WHERE card_id = ?");
+    a.text(1, cardId);
+    a.run();
 }
 
 // Cards the server has not heard about yet: created offline ("tmp-") or edited/moved with a write
@@ -489,6 +502,54 @@ void Store::replaceComments(const std::string& cardId, std::span<const Comment> 
         ins.run();
     }
     tx.commit();
+}
+
+void Store::replaceAttachments(const std::string& cardId, std::span<const Attachment> attachments) {
+    std::lock_guard lk(*mu_);
+    Tx tx(db_);
+    Stmt del(db_, "DELETE FROM attachments WHERE card_id = ?");
+    del.text(1, cardId);
+    del.run();
+    Stmt ins(db_,
+             "INSERT OR REPLACE INTO attachments(card_id, id, name, url, mime, is_upload, preview_url, "
+             "preview_w, preview_h, ord) VALUES(?,?,?,?,?,?,?,?,?,?)");
+    int ord = 0;
+    for (const auto& a : attachments) {
+        ins.text(1, cardId);
+        ins.text(2, a.id);
+        ins.text(3, a.name);
+        ins.text(4, a.url);
+        ins.text(5, a.mimeType);
+        ins.integer(6, a.isUpload ? 1 : 0);
+        ins.text(7, a.previewUrl);
+        ins.integer(8, a.previewWidth);
+        ins.integer(9, a.previewHeight);
+        ins.integer(10, ord++);
+        ins.run();
+    }
+    tx.commit();
+}
+
+std::vector<Attachment> Store::attachments(const std::string& cardId) {
+    std::lock_guard lk(*mu_);
+    Stmt s(db_,
+           "SELECT id, name, url, mime, is_upload, preview_url, preview_w, preview_h FROM attachments "
+           "WHERE card_id = ? ORDER BY ord");
+    s.text(1, cardId);
+    std::vector<Attachment> out;
+    while (s.step()) {
+        Attachment a;
+        a.id = s.col_text(0);
+        a.name = s.col_text(1);
+        a.url = s.col_text(2);
+        a.mimeType = s.col_text(3);
+        a.isUpload = s.col_int(4) != 0;
+        a.previewUrl = s.col_text(5);
+        a.previewWidth = s.col_int(6);
+        a.previewHeight = s.col_int(7);
+        out.push_back(std::move(a));
+    }
+    return out;
 }
 
 std::vector<Label> Store::labels(const std::string& boardId) {

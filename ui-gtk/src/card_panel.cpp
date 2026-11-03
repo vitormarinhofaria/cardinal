@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "cardinal/image_refs.h"
+
 namespace cardinal::gtk {
 namespace {
 
@@ -46,6 +48,29 @@ std::string trimmed(const std::string& s) {
 }
 
 GtkWidget* section(const char* title) { return label(title, "section-title"); }
+
+constexpr int kAttachmentThumb = 120;
+constexpr int kDescriptionThumb = 96;
+constexpr int kCommentThumb = 64;
+
+GtkWidget* flow(int spacing) {
+    GtkWidget* f = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(f), GTK_SELECTION_NONE);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(f), 12);
+    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(f), spacing);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(f), spacing);
+    gtk_flow_box_set_activate_on_single_click(GTK_FLOW_BOX(f), FALSE);
+    gtk_widget_set_halign(f, GTK_ALIGN_START);
+    addClass(f, "thumb-strip");
+    return f;
+}
+
+std::string fileNameOf(const std::string& url) {
+    const size_t cut = url.find_first_of("?#");
+    const std::string path = url.substr(0, cut);
+    const size_t slash = path.rfind('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
 
 GtkWidget* textArea(GtkTextBuffer** bufferOut, int minHeight) {
     GtkWidget* view = gtk_text_view_new();
@@ -94,8 +119,8 @@ void clearListBox(GtkWidget* list) {
 
 }  // namespace
 
-CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onClose)
-    : vm_(std::move(vm)), onClose_(std::move(onClose)) {
+CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::function<void()> onClose)
+    : vm_(std::move(vm)), images_(images), onClose_(std::move(onClose)) {
     // ---- header: title + close
     GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_margin_top(header, 16);
@@ -265,6 +290,8 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_box_append(GTK_BOX(descButtons_), save);
     gtk_widget_set_visible(descButtons_, FALSE);
     gtk_box_append(GTK_BOX(main_), descButtons_);
+    descImagesBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);  // pictures the description shows
+    gtk_box_append(GTK_BOX(main_), descImagesBox_);
 
     extrasSpinner_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget* sp = gtk_spinner_new();
@@ -479,8 +506,36 @@ void CardPanel::update(const CardPanelState& s) {
 
     updateLabels(s);
     updateMembers(s);
+    updateExtras(s);  // before the comments and description: they use its previews
+    updateDescriptionImages(s);
     updateComments(s);
-    updateExtras(s);
+}
+
+std::string CardPanel::thumbUrlFor(const std::string& url) const {
+    for (const auto& a : shownAttachments_)
+        if (a.url == url && !a.previewUrl.empty()) return a.previewUrl;
+    return url;
+}
+
+GtkWidget* CardPanel::thumbStrip(const std::vector<std::string>& urls, int side) const {
+    GtkWidget* strip = nullptr;
+    for (const auto& url : urls) {
+        const std::string thumb = thumbUrlFor(url);
+        if (thumb == url && !shownExtrasLoaded_ && url.find("/attachments/") != std::string::npos) continue;
+        if (!strip) strip = flow(6);
+        gtk_flow_box_append(GTK_FLOW_BOX(strip), images_->thumbnail(thumb, side, url, fileNameOf(url)));
+    }
+    return strip;
+}
+
+void CardPanel::updateDescriptionImages(const CardPanelState& s) {
+    if (s.descriptionImages == shownDescImages_ && descImagesVersion_ == attachmentsVersion_) return;
+    shownDescImages_ = s.descriptionImages;
+    descImagesVersion_ = attachmentsVersion_;
+    clearChildren(descImagesBox_);
+    if (!images_ || s.descriptionImages.empty()) return;
+    if (GtkWidget* strip = thumbStrip(s.descriptionImages, kDescriptionThumb))
+        gtk_box_append(GTK_BOX(descImagesBox_), strip);
 }
 
 void CardPanel::updateNotice(const CardPanelState& s) {
@@ -571,8 +626,10 @@ void CardPanel::updateMembers(const CardPanelState& s) {
 }
 
 void CardPanel::updateComments(const CardPanelState& s) {
-    if (s.comments == shownComments_) return;
+    // The attachment list decides which preview a comment's picture uses (see thumbStrip).
+    if (s.comments == shownComments_ && commentsVersion_ == attachmentsVersion_) return;
     shownComments_ = s.comments;
+    commentsVersion_ = attachmentsVersion_;
     clearChildren(commentsBox_);
     for (const auto& c : s.comments) {
         GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -586,7 +643,10 @@ void CardPanel::updateComments(const CardPanelState& s) {
         GtkWidget* name = label(c.authorName.empty() ? "Alguém" : c.authorName, "heading");
         gtk_box_append(GTK_BOX(head), name);
         gtk_box_append(GTK_BOX(head), label(c.sending ? "enviando…" : formatDate(c.date), "dim-label"));
-        GtkWidget* text = label(c.text);
+        const bool pictures = images_ && !c.images.empty();
+        const std::string shown = pictures ? withoutMarkdownImages(c.text) : c.text;
+        GtkWidget* text = label(shown);
+        gtk_widget_set_visible(text, !shown.empty());
         gtk_label_set_wrap(GTK_LABEL(text), TRUE);
         gtk_label_set_wrap_mode(GTK_LABEL(text), PANGO_WRAP_WORD_CHAR);
         gtk_label_set_selectable(GTK_LABEL(text), TRUE);
@@ -595,6 +655,10 @@ void CardPanel::updateComments(const CardPanelState& s) {
         gtk_widget_set_hexpand(text, TRUE);
         gtk_box_append(GTK_BOX(bubble), head);
         gtk_box_append(GTK_BOX(bubble), text);
+        if (GtkWidget* strip = pictures ? thumbStrip(c.images, kCommentThumb) : nullptr) {
+            gtk_widget_set_margin_top(strip, 4);
+            gtk_box_append(GTK_BOX(bubble), strip);
+        }
         if (c.sending) addClass(row, "comment-sending");
         gtk_box_append(GTK_BOX(row), who);
         gtk_box_append(GTK_BOX(row), bubble);
@@ -605,6 +669,7 @@ void CardPanel::updateComments(const CardPanelState& s) {
 void CardPanel::updateExtras(const CardPanelState& s) {
     if (s.extrasLoaded != shownExtrasLoaded_) {
         shownExtrasLoaded_ = s.extrasLoaded;
+        ++attachmentsVersion_;
         gtk_widget_set_visible(extrasSpinner_, !s.extrasLoaded);
     }
     if (s.checklists != shownChecklists_) {
@@ -627,10 +692,26 @@ void CardPanel::updateExtras(const CardPanelState& s) {
     }
     if (s.attachments != shownAttachments_) {
         shownAttachments_ = s.attachments;
+        ++attachmentsVersion_;
         clearChildren(attachmentsBox_);
         if (!s.attachments.empty()) gtk_box_append(GTK_BOX(attachmentsBox_), section("Anexos"));
+        GtkWidget* pictures = images_ ? flow(10) : nullptr;
+        bool anyPicture = false;
         for (const auto& a : s.attachments) {
             const std::string text = a.name.empty() ? a.url : a.name;
+            if (pictures && isImageAttachment(a)) {
+                anyPicture = true;
+                GtkWidget* item = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+                gtk_box_append(GTK_BOX(item), images_->thumbnail(a.previewUrl.empty() ? a.url : a.previewUrl,
+                                                                kAttachmentThumb, a.url, text));
+                GtkWidget* caption = label(text, "thumb-caption");
+                gtk_label_set_ellipsize(GTK_LABEL(caption), PANGO_ELLIPSIZE_MIDDLE);
+                gtk_label_set_max_width_chars(GTK_LABEL(caption), 1);
+                gtk_widget_set_size_request(caption, kAttachmentThumb, -1);
+                gtk_box_append(GTK_BOX(item), caption);
+                gtk_flow_box_append(GTK_FLOW_BOX(pictures), item);
+                continue;
+            }
             // Teammates can attach anything: only web links are clickable (never file: or custom schemes).
             const bool web = a.url.rfind("https://", 0) == 0 || a.url.rfind("http://", 0) == 0;
             GtkWidget* link = web ? gtk_link_button_new_with_label(a.url.c_str(), text.c_str())
@@ -639,6 +720,13 @@ void CardPanel::updateExtras(const CardPanelState& s) {
             if (GTK_IS_LABEL(text_label)) gtk_label_set_ellipsize(GTK_LABEL(text_label), PANGO_ELLIPSIZE_MIDDLE);
             gtk_widget_set_halign(link, GTK_ALIGN_START);
             gtk_box_append(GTK_BOX(attachmentsBox_), link);
+        }
+        if (anyPicture) {
+            // pictures first, under the title, like Trello
+            gtk_box_insert_child_after(GTK_BOX(attachmentsBox_), pictures, gtk_widget_get_first_child(attachmentsBox_));
+        } else if (pictures) {
+            g_object_ref_sink(pictures);
+            g_object_unref(pictures);
         }
     }
 }

@@ -402,3 +402,33 @@ TEST_F(StoreTest, V2DatabaseGainsTheLoadedColumnKeepingItsLists) {
     s.markListLoaded("l1", 3);
     EXPECT_TRUE(s.lists("b1")[0].loaded);
 }
+
+TEST_F(StoreTest, AttachmentsKeepOrderAndAllFieldsAndGoWithTheCard) {
+    Attachment a;
+    a.id = "at1";
+    a.name = "foto.png";
+    a.url = "https://trello.com/1/cards/c1/attachments/at1/download/foto.png";
+    a.mimeType = "image/png";
+    a.isUpload = true;
+    a.previewUrl = "https://trello.com/p";
+    a.previewWidth = 600;
+    a.previewHeight = 400;
+    Attachment b;
+    b.id = "at0";
+    b.name = "link";
+    b.url = "https://x.com";
+    {
+        Store s = Store::open(path_);
+        s.replaceAttachments("c1", std::vector<Attachment>{a, b});
+    }
+    Store s = Store::open(path_);  // survives a restart
+    auto out = s.attachments("c1");
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[0], a);
+    EXPECT_EQ(out[1], b);
+    s.replaceAttachments("c1", std::vector<Attachment>{b});
+    EXPECT_EQ(s.attachments("c1").size(), 1u);
+    s.upsertCards(std::vector<Card>{makeCard("c1", "l1", "c")});
+    s.deleteCard("c1");
+    EXPECT_TRUE(s.attachments("c1").empty());
+}

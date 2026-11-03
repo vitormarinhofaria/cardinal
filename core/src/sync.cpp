@@ -294,6 +294,7 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
             if (e.status() == 404) return;  // vanished between the two requests
             throw;
         }
+        store.replaceAttachments(cardId, loaded.attachments);  // shown from here next time
         {
             std::lock_guard lk(mutex);
             extras[cardId] = std::move(loaded);
@@ -365,6 +366,10 @@ std::vector<Comment> SyncEngine::comments(const std::string& cardId) {
 std::vector<Label> SyncEngine::labels(const std::string& boardId) { return impl_->store.labels(boardId); }
 std::vector<Member> SyncEngine::members(const std::string& boardId) {
     return impl_->store.members(boardId);
+}
+
+std::vector<Attachment> SyncEngine::cachedAttachments(const std::string& cardId) {
+    return impl_->store.attachments(cardId);
 }
 
 std::optional<CardExtras> SyncEngine::extras(const std::string& cardId) {

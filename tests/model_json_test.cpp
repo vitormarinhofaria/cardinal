@@ -90,3 +90,26 @@ TEST(ParseCard, ReadsClosedFlagAndDefaultsToOpen) {
     EXPECT_TRUE(parseCard({{"id", "c"}, {"closed", true}}).closed);
     EXPECT_FALSE(parseCard({{"id", "c"}}).closed);
 }
+
+TEST(ModelJson, AttachmentPicksTheSmallestPreviewThatIsStillSharp) {
+    auto j = nlohmann::json::parse(R"({"id":"a","name":"f.png","url":"https://trello.com/f.png",
+        "mimeType":"image/png","isUpload":true,"previews":[
+          {"url":"https://trello.com/p150","width":150,"height":100},
+          {"url":"https://trello.com/p600","width":600,"height":400},
+          {"url":"https://trello.com/p1200","width":1200,"height":800},
+          {"url":"https://trello.com/p500","width":500,"height":333}]})");
+    Attachment a = parseAttachment(j);
+    EXPECT_EQ(a.mimeType, "image/png");
+    EXPECT_TRUE(a.isUpload);
+    EXPECT_EQ(a.previewUrl, "https://trello.com/p500");
+    EXPECT_EQ(a.previewWidth, 500);
+    EXPECT_EQ(a.previewHeight, 333);
+}
+
+TEST(ModelJson, AttachmentWithOnlySmallPreviewsTakesTheBiggest) {
+    auto j = nlohmann::json::parse(R"({"id":"a","previews":[
+          {"url":"https://trello.com/p70","width":70,"height":50},
+          {"url":"https://trello.com/p150","width":150,"height":100}]})");
+    EXPECT_EQ(parseAttachment(j).previewUrl, "https://trello.com/p150");
+    EXPECT_TRUE(parseAttachment(nlohmann::json::parse(R"({"id":"a"})")).previewUrl.empty());
+}

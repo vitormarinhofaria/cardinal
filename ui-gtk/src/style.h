@@ -65,6 +65,13 @@ inline const char* kStyleCss = R"css(
 .comment-bubble { background: @card_bg_color; border-radius: 9px; padding: 8px 10px; }
 .description-view { background: @card_bg_color; border-radius: 9px; padding: 6px; }
 
+.thumb { border-radius: 8px; background: alpha(@view_fg_color, .08); }
+.thumb-loading { background: alpha(@view_fg_color, .12); }
+.thumb-failed { opacity: .5; }
+.thumb-button { padding: 0; border-radius: 8px; }
+.thumb-strip flowboxchild { padding: 0; min-width: 0; min-height: 0; }
+.thumb-caption { font-size: smaller; opacity: .75; }
+
 .status-offline { color: @warning_color; }
 )css";
 

@@ -11,9 +11,11 @@ and token, and applies writes (card edits, moves, labels, members, comments).
 import argparse
 import json
 import random
+import struct
 import threading
 import time
 import urllib.parse
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
@@ -70,7 +72,11 @@ def build(cards_total, seed):
                 cs.append({"id": "a%d_%d" % (n, k), "idMemberCreator": rnd.choice(members)[0],
                            "date": iso(now - rnd.randint(0, 30 * 86400)),
                            "data": {"text": "Comentário %d do card %d. Vamos olhar isso na sprint." % (k + 1, n)}})
-            card["badges"] = {"comments": len(cs)}
+            if n <= 3:  # pictures pasted in the description and in a comment, as Trello writes them
+                card["desc"] += ("\n\nTela atual:\n\n![captura.png](@BASE@/1/cards/%s/attachments/at%s_0/download/captura.png)"
+                                 % (cid, cid))
+                cs.append({"id": "a%d_img" % n, "idMemberCreator": members[1][0], "date": iso(now - 3600),
+                           "data": {"text": "Olha o erro:\n\n![erro.png](@BASE@/1/img/erro%d.png)\n\nacontece sempre." % n}})
             cards[cid] = card
             comments[cid] = cs
             lists[lid]["cards"].append(cid)
@@ -78,6 +84,51 @@ def build(cards_total, seed):
         boards={"b1": {"id": "b1", "name": "Produto", "closed": False}},
         labels=labels, members=members, lists=lists, cards=cards, comments=comments, seq=n,
     )
+
+
+PNG_CACHE = {}
+
+
+def png(w, h, hue):
+    """A w×h gradient PNG, so attachments and their previews are real pictures."""
+    key = (w, h, hue)
+    if key in PNG_CACHE:
+        return PNG_CACHE[key]
+    r0, g0, b0 = [(hue * k) % 256 for k in (97, 57, 151)]
+    rows = bytearray()
+    for y in range(h):
+        rows.append(0)
+        v = y * 255 // max(1, h - 1)
+        for x in range(w):
+            u = x * 255 // max(1, w - 1)
+            rows += bytes(((r0 + u) % 256, (g0 + v) % 256, (b0 + (u ^ v) // 2) % 256))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    out = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
+           chunk(b"IDAT", zlib.compress(bytes(rows), 6)) + chunk(b"IEND", b""))
+    PNG_CACHE[key] = out
+    return out
+
+
+# Uploaded attachments: id -> (name, width, height). Their downloads need the OAuth header, as on Trello.
+IMAGE_SIZES = {"full": (1600, 1200), "p150": (150, 113), "p600": (600, 450)}
+
+
+def attachments_of(cid, base):
+    n = int(cid[1:]) if cid[1:].isdigit() else 0
+    out = []
+    for k, name in enumerate(["captura.png", "diagrama.png"][: 1 + n % 2]):
+        aid = "at%s_%d" % (cid, k)
+        url = "%s/1/cards/%s/attachments/%s/download/%s" % (base, cid, aid, name)
+        out.append({"id": aid, "name": name, "url": url, "mimeType": "image/png", "isUpload": True,
+                    "previews": [{"id": p, "url": "%s/1/cards/%s/attachments/%s/previews/%s/download/%s" %
+                                  (base, cid, aid, p, name), "width": w, "height": h, "scaled": p != "full"}
+                                 for p, (w, h) in IMAGE_SIZES.items()]})
+    out.append({"id": "pdf" + cid, "name": "especificacao.pdf", "url": "https://example.com/especificacao.pdf",
+                "mimeType": "application/pdf", "isUpload": False, "previews": []})
+    return out
 
 
 def pick(obj, fields):
@@ -91,8 +142,18 @@ class Handler(BaseHTTPRequestHandler):
         if STATE.get("verbose"):
             print("%s %s" % (self.command, self.path))
 
+    def base(self):
+        return "http://" + self.headers.get("Host", "127.0.0.1")
+
+    def reply_png(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def reply(self, status, body):
-        data = json.dumps(body).encode()
+        data = json.dumps(body).replace("@BASE@", self.base()).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
@@ -109,11 +170,36 @@ class Handler(BaseHTTPRequestHandler):
         if STATE.get("delay"):
             time.sleep(STATE["delay"])
         parts = [p for p in u.path.split("/") if p]  # ["1", "cards", "c1", ...]
+        if self.images(method, parts):
+            return
         with LOCK:
             try:
                 return self.dispatch(method, parts, q, form)
             except KeyError:
                 return self.reply(404, "not found")
+
+    def images(self, method, parts):
+        """Picture downloads, served outside the lock: generating a PNG is slow in Python."""
+        S = STATE
+        if parts[:2] == ["1", "img"] and method == "GET":  # an outside picture: no credentials
+            with LOCK:
+                S["image_downloads"] = S.get("image_downloads", 0) + 1
+            print("image download #%d %s" % (S["image_downloads"], self.path), flush=True)
+            self.reply_png(png(800, 500, len(parts[-1])))
+            return True
+        if parts[:2] == ["1", "cards"] and "attachments" in parts and "download" in parts and method == "GET":
+            auth = self.headers.get("Authorization", "")
+            if not auth.startswith("OAuth oauth_consumer_key="):
+                self.reply(401, "unauthorized permission requested")
+                return True
+            size = parts[parts.index("previews") + 1] if "previews" in parts else "full"
+            w, h = IMAGE_SIZES.get(size, IMAGE_SIZES["full"])
+            with LOCK:
+                S["image_downloads"] = S.get("image_downloads", 0) + 1
+            print("image download #%d %s" % (S["image_downloads"], self.path), flush=True)
+            self.reply_png(png(w, h, len(parts[4])))
+            return True
+        return None
 
     def dispatch(self, method, parts, q, form):
         S = STATE
@@ -166,7 +252,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"id": "ck" + cid, "name": "Passos", "checkItems": [
                         {"id": "i1", "name": "Reproduzir", "state": "complete"},
                         {"id": "i2", "name": "Corrigir", "state": "incomplete"}]}],
-                    "attachments": [{"id": "at" + cid, "name": "captura.png", "url": "https://example.com/captura.png"}],
+                    "attachments": attachments_of(cid, self.base()),
                     "members": [{"id": m[0], "fullName": m[1], "initials": m[2]} for m in S["members"] if m[0] in card["idMembers"]]})
             out = pick(card, q.get("fields", "").split(",") + ["id"])
             if "actions" in q:

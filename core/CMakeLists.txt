@@ -22,6 +22,8 @@ add_library(cardinal_core STATIC
   src/session.cpp
   src/polling_event_source.cpp
   src/time_util.cpp
+  src/image_refs.cpp
+  src/image_cache.cpp
 )
 target_include_directories(cardinal_core PUBLIC include)
 target_link_libraries(cardinal_core PUBLIC

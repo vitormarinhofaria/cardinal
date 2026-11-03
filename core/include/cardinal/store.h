@@ -63,6 +63,8 @@ public:
     std::vector<Label> labels(const std::string& boardId);
     std::vector<Member> members(const std::string& boardId);
     std::vector<Comment> comments(const std::string& cardId);
+    void replaceAttachments(const std::string& cardId, std::span<const Attachment> attachments);
+    std::vector<Attachment> attachments(const std::string& cardId);
 
     std::vector<Board> boards();
     std::vector<List> lists(const std::string& boardId);

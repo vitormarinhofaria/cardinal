@@ -144,6 +144,7 @@ struct CommentRow {
     std::string text;
     std::string date;
     bool sending = false;  // optimistic, not confirmed yet
+    std::vector<std::string> images;  // pictures the text shows (see imageUrlsIn)
     bool operator==(const CommentRow&) const = default;
 };
 
@@ -163,13 +164,14 @@ struct CardPanelState {
     std::string listName;
     std::string title;
     std::string description;
+    std::vector<std::string> descriptionImages;  // pictures the description shows
     std::vector<LabelChip> labels;
     std::vector<MemberChip> members;
     std::vector<LabelChip> boardLabels;    // for the label picker
     std::vector<MemberChip> boardMembers;  // for the member picker
     std::vector<CommentRow> comments;      // newest first
     std::vector<Checklist> checklists;     // read-only in v1
-    std::vector<Attachment> attachments;   // read-only in v1
+    std::vector<Attachment> attachments;   // read-only; the cached ones until extras load
     bool extrasLoaded = false;
     std::vector<PanelNotice> notices;
     bool operator==(const CardPanelState&) const = default;

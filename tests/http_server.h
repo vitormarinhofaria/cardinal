@@ -23,11 +23,13 @@ struct HttpRequestInfo {
     std::string path;   // without query
     std::string query;  // raw, still percent-encoded
     std::string body;
+    std::string headers;  // the raw header block, lowercased
 };
 
 struct HttpReply {
     int status = 200;
     std::string body = "{}";
+    std::vector<std::string> headers;  // extra "Name: value" lines
 };
 
 class RoutedServer {
@@ -109,13 +111,17 @@ private:
         req.path = target.substr(0, q);
         if (q != std::string::npos) req.query = target.substr(q + 1);
         req.body = raw.substr(headerEnd + 4);
+        req.headers = raw.substr(0, headerEnd);
+        for (auto& ch : req.headers) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         {
             std::lock_guard lk(mu_);
             log_.push_back(req);
         }
         HttpReply r = handler_(req);
-        std::string out = "HTTP/1.1 " + std::to_string(r.status) + " X\r\nContent-Type: application/json\r\n"
-                          "Content-Length: " + std::to_string(r.body.size()) +
+        std::string extra;
+        for (const auto& h : r.headers) extra += h + "\r\n";
+        std::string out = "HTTP/1.1 " + std::to_string(r.status) + " X\r\nContent-Type: application/json\r\n" +
+                          extra + "Content-Length: " + std::to_string(r.body.size()) +
                           "\r\nConnection: close\r\n\r\n" + r.body;
         ::send(c, out.data(), out.size(), MSG_NOSIGNAL);
     }

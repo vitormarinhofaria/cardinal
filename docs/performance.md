@@ -58,6 +58,23 @@ Histórico do que custou caro e o que resolveu (para não repetir):
    do fim), em vez das 244.
 4. Antes da correção: ~950 ms até o board aparecer. Depois: ~370 ms.
 
+## Imagens no card (anexos, descrição, comentários)
+
+* Download só pela rede própria das imagens (3 conexões, fora do `Scheduler`): um anexo grande não
+  atrasa as chamadas da API. Pedidos simultâneos da mesma URL viram um download só.
+* Anexos usam o `preview` reduzido do Trello (o menor com largura ≥ 480 px), não o original. Uma
+  imagem da descrição ou de um comentário que aponta para um anexo espera a lista de anexos para
+  usar esse mesmo preview.
+* Cache em disco em `<data-dir>/images/` (um arquivo por URL, LRU por data de uso, teto de 300 MB),
+  e a lista de anexos fica no SQLite: reabrir o card, até offline, não baixa nada.
+* Decodificação numa thread de trabalho, já na escala da miniatura (JPEG decodifica reduzido) e
+  recortada em quadrado; texturas ficam num LRU em memória (~96 MB) para o próximo card.
+
+Medido com o mock (card `c1`, 2 anexos + 1 imagem na descrição + 1 num comentário): 3 downloads na
+primeira abertura, 0 na segunda. Clique → primeiro frame do card: ~185 ms contra ~170 ms sem a
+funcionalidade, no mesmo início a frio em que o board também está carregando (diferença perto do
+ruído entre execuções).
+
 ## O que não foi medido
 * Uma lista fria de ~800 cards: as listas medidas têm 244. Pelo desenho (janela de 40 linhas no
   `GtkListView`, +60 conforme o scroll) o custo na interface não depende do tamanho da lista, mas
