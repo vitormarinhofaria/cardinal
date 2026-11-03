@@ -15,21 +15,21 @@ install_deps_apt() {
     $sudo_cmd apt-get update
     $sudo_cmd apt-get install -y \
         build-essential cmake ninja-build pkg-config clangd \
-        libcurl4-openssl-dev libsqlite3-dev nlohmann-json3-dev libsecret-1-dev \
+        libcurl4-openssl-dev libsqlite3-dev nlohmann-json3-dev libsecret-1-dev libmd4c-dev \
         libgtk-4-dev libadwaita-1-dev libgtest-dev libgmock-dev
 }
 
 install_deps_dnf() {
     $sudo_cmd dnf install -y \
         gcc-c++ cmake ninja-build pkgconf-pkg-config clang-tools-extra \
-        libcurl-devel sqlite-devel json-devel libsecret-devel \
+        libcurl-devel sqlite-devel json-devel libsecret-devel md4c-devel \
         gtk4-devel libadwaita-devel gtest-devel gmock-devel
 }
 
 install_deps_pacman() {
     $sudo_cmd pacman -S --needed --noconfirm \
         base-devel cmake ninja pkgconf clang \
-        curl sqlite nlohmann-json libsecret gtk4 libadwaita gtest
+        curl sqlite nlohmann-json libsecret md4c gtk4 libadwaita gtest
 }
 
 # MSYS2 (Windows): packages carry the mingw-w64 prefix of the active environment.
@@ -37,7 +37,7 @@ install_deps_msys2() {
     local p="${MINGW_PACKAGE_PREFIX:?run this from an MSYS2 MINGW64/UCRT64 shell}"
     pacman -S --needed --noconfirm \
         "$p-toolchain" "$p-cmake" "$p-ninja" "$p-pkgconf" "$p-clang-tools-extra" \
-        "$p-curl" "$p-sqlite3" "$p-nlohmann-json" "$p-libsecret" \
+        "$p-curl" "$p-sqlite3" "$p-nlohmann-json" "$p-libsecret" "$p-md4c" \
         "$p-gtk4" "$p-libadwaita" "$p-gtest"
 }
 

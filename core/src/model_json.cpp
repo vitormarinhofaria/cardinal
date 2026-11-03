@@ -62,6 +62,7 @@ Card parseCard(const json& j) {
     c.labelIds = strings(j, "idLabels");
     c.memberIds = strings(j, "idMembers");
     c.dateLastActivity = str(j, "dateLastActivity");
+    c.shortLink = str(j, "shortLink");
     c.closed = j.value("closed", false);
     auto badges = j.find("badges");
     if (badges != j.end() && badges->is_object()) c.commentCount = badges->value("comments", 0);

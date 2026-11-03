@@ -737,13 +737,55 @@ TEST_F(VmTest, CardPanelShowsCachedAttachmentsAndPicturesInTextBeforeTheNetwork)
     EXPECT_FALSE(s.extrasLoaded);
     ASSERT_EQ(s.attachments.size(), 1u);
     EXPECT_EQ(s.attachments[0].name, "foto.png");
-    EXPECT_EQ(s.descriptionImages,
-              std::vector<std::string>{"https://trello.com/1/cards/c1/attachments/a/download/print.png"});
     ASSERT_EQ(s.comments.size(), 1u);
-    EXPECT_EQ(s.comments[0].images, std::vector<std::string>{"https://x.com/erro.jpg"});
 
     pump();  // the network answers: extras replace the cached attachments, and are kept
     EXPECT_TRUE(panel->state().get().extrasLoaded);
     EXPECT_EQ(panel->state().get().attachments[0].name, "spec.pdf");
     EXPECT_EQ(store->attachments("c1")[0].name, "spec.pdf");
+}
+
+TEST_F(VmTest, CardPanelResolvesLinksToCardsFromTheCacheThenFromTrello) {
+    const std::string desc =
+        "depende de https://trello.com/c/KnOwN111/7-migrar-api e [este](https://trello.com/c/rem0te22)";
+    Card other = card("c3", "l2", "Migrar API", 2);
+    other.shortLink = "KnOwN111";
+    std::vector<Card> cached{card("c1", "l1", "Corrigir login", 1, desc), other};
+    store->upsertCards(cached);
+    store->replaceComments("c1", std::vector<Comment>{{"a0", "m1", "e https://trello.com/c/g0ne3333", "d"}});
+    routeFirst(Method::Get, "/cards/c1", 200,
+               R"({"id":"c1","idList":"l1","name":"Corrigir login","desc":")" + desc + R"(","pos":1,
+                   "actions":[{"id":"a0","idMemberCreator":"m1","date":"d","data":{"text":"e https://trello.com/c/g0ne3333"}}]})",
+               "actions=commentCard");
+    routeFirst(Method::Get, "/cards/rem0te22", 200, R"({"id":"x9","name":"De outro quadro","shortLink":"rem0te22"})");
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+
+    auto panel = app->openCard("c1");
+    exec.runOne();  // only the cache job: the cached card is known, the others are on their way
+    ui.runAll();
+    using S = CardLink::Status;
+    {
+        const auto& links = panel->state().get().linkedCards;
+        ASSERT_EQ(links.size(), 3u);
+        EXPECT_EQ(links[0], (CardLink{"KnOwN111", "c3", "Migrar API", S::Resolved}));
+        EXPECT_EQ(links[1].status, S::Pending);
+        EXPECT_EQ(links[2].status, S::Pending);
+    }
+    pump();
+    const auto links = panel->state().get().linkedCards;
+    ASSERT_EQ(links.size(), 3u);
+    EXPECT_EQ(links[0].status, S::Resolved);
+    EXPECT_EQ(links[1], (CardLink{"rem0te22", "x9", "De outro quadro", S::Resolved}));
+    EXPECT_EQ(links[2], (CardLink{"g0ne3333", "", "", S::Missing}));
+    EXPECT_EQ(app->status().get().rejections, 0);
+
+    // looked up once per run, not again for every panel
+    const size_t asked = sent(Method::Get, "/cards/rem0te22").size();
+    EXPECT_EQ(asked, 1u);
+    auto again = app->openCard("c1");
+    pump();
+    EXPECT_EQ(sent(Method::Get, "/cards/rem0te22").size(), asked);
+    EXPECT_EQ(again->state().get().linkedCards, links);
 }

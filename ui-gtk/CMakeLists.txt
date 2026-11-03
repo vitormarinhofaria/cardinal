@@ -17,6 +17,7 @@ add_executable(cardinal_gtk
   src/board_view.cpp
   src/card_panel.cpp
   src/image_loader.cpp
+  src/markdown_view.cpp
 )
 target_compile_definitions(cardinal_gtk PRIVATE CARDINAL_TRELLO_API_KEY="${CARDINAL_TRELLO_API_KEY}")
 target_link_libraries(cardinal_gtk PRIVATE cardinal_core PkgConfig::GTK4 PkgConfig::ADW PkgConfig::PIXBUF)

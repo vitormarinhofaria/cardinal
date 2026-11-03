@@ -72,6 +72,20 @@ inline const char* kStyleCss = R"css(
 .thumb-strip flowboxchild { padding: 0; min-width: 0; min-height: 0; }
 .thumb-caption { font-size: smaller; opacity: .75; }
 
+.description-rendered { border-radius: 9px; padding: 6px 8px; margin: 0 -8px; }
+.description-rendered:hover { background: alpha(@view_fg_color, .04); }
+.md-placeholder { font-style: italic; }
+.markdown .md-h1 { font-size: 1.3em; font-weight: 800; margin-top: 4px; }
+.markdown .md-h2 { font-size: 1.15em; font-weight: 800; margin-top: 4px; }
+.markdown .md-h3 { font-weight: 800; }
+.markdown .md-marker { opacity: .7; }
+.markdown .md-quote { border-left: 3px solid alpha(@view_fg_color, .25); padding-left: 10px; }
+.markdown .md-code { background: alpha(@view_fg_color, .07); border-radius: 6px; }
+.markdown .md-code-text { font-family: monospace; padding: 6px 8px; }
+.markdown .md-th { font-weight: 800; }
+.markdown .card-link-chip { padding: 6px 10px; border-radius: 8px; background: alpha(@accent_bg_color, .12); }
+.markdown .card-link-chip:hover { background: alpha(@accent_bg_color, .2); }
+
 .status-offline { color: @warning_color; }
 )css";
 

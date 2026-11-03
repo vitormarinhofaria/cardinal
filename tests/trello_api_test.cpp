@@ -137,7 +137,7 @@ TEST_F(ApiTest, ListCardsAsksMinimalFieldsAtGivenPriority) {
     EXPECT_EQ(req.calls[0].priority, Priority::Background);
     EXPECT_EQ(pathOf(req.calls[0].url), "/lists/l1/cards");
     auto q = queryOf(req.calls[0].url);
-    EXPECT_EQ(q["fields"], "name,idList,pos,idLabels,idMembers,dateLastActivity,badges");
+    EXPECT_EQ(q["fields"], "name,idList,pos,idLabels,idMembers,dateLastActivity,badges,shortLink");
 }
 
 TEST_F(ApiTest, CardCoreIsInteractiveAndParsesDescriptionAndComments) {

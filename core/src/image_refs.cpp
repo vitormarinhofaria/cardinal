@@ -106,39 +106,4 @@ std::vector<std::string> imageUrlsIn(std::string_view text) {
     return out;
 }
 
-std::string withoutMarkdownImages(std::string_view text) {
-    std::string out;
-    size_t i = 0;
-    while (i < text.size()) {
-        const size_t img = text.find("![", i);
-        if (img == std::string_view::npos) break;
-        const size_t close = text.find("](", img + 2);
-        const size_t line = text.find('\n', img + 2);
-        if (close == std::string_view::npos || (line != std::string_view::npos && line < close)) {
-            out.append(text.substr(i, img + 2 - i));
-            i = img + 2;
-            continue;
-        }
-        size_t end = 0;
-        markdownTarget(text, close + 2, &end);
-        out.append(text.substr(i, img - i));
-        i = end;
-    }
-    out.append(text.substr(std::min(i, text.size())));
-    // collapse the empty lines the pictures leave, and trim
-    std::string clean;
-    int newlines = 0;
-    for (char c : out) {
-        if (c == '\n') {
-            if (++newlines > 2) continue;
-        } else if (c != ' ' && c != '\t' && c != '\r') {
-            newlines = 0;
-        }
-        clean += c;
-    }
-    const size_t b = clean.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return "";
-    return clean.substr(b, clean.find_last_not_of(" \t\r\n") - b + 1);
-}
-
 }  // namespace cardinal

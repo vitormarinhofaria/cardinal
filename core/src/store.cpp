@@ -10,7 +10,7 @@
 namespace cardinal {
 namespace {
 
-constexpr int kSchemaVersion = 4;
+constexpr int kSchemaVersion = 5;
 
 [[noreturn]] void fail(sqlite3* db, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + sqlite3_errmsg(db));
@@ -135,6 +135,13 @@ void migrate(sqlite3* db) {
                 PRIMARY KEY(card_id, id));
         )sql");
     }
+    if (version < 5) {
+        // the id in the card's URL, so links to cards resolve without the network
+        exec(db, R"sql(
+            ALTER TABLE cards ADD COLUMN short_link TEXT NOT NULL DEFAULT '';
+            CREATE INDEX IF NOT EXISTS cards_short_link ON cards(short_link);
+        )sql");
+    }
     exec(db, ("PRAGMA user_version = " + std::to_string(kSchemaVersion)).c_str());
     tx.commit();
 }
@@ -155,11 +162,29 @@ Card cardFromRow(const Stmt& s) {
     c.memberIds = parseIds(s.col_text(6));
     c.commentCount = s.col_int(7);
     c.dateLastActivity = s.col_text(8);
+    c.shortLink = s.col_text(9);
     return c;
 }
 
 constexpr const char* kCardCols =
-    "id, list_id, name, desc, pos, label_ids, member_ids, comment_count, date_last_activity";
+    "id, list_id, name, desc, pos, label_ids, member_ids, comment_count, date_last_activity, short_link";
+
+// A card from a write's response carries no shortLink: keep the one already known.
+constexpr const char* kKeepShortLink =
+    "short_link=CASE WHEN excluded.short_link <> '' THEN excluded.short_link ELSE cards.short_link END";
+
+void bindCard(Stmt& s, const Card& c) {
+    s.text(1, c.id);
+    s.text(2, c.listId);
+    s.text(3, c.name);
+    s.text(4, c.desc);
+    s.real(5, c.pos);
+    s.text(6, nlohmann::json(c.labelIds).dump());
+    s.text(7, nlohmann::json(c.memberIds).dump());
+    s.integer(8, c.commentCount);
+    s.text(9, c.dateLastActivity);
+    s.text(10, c.shortLink);
+}
 
 std::vector<std::string> idsOf(sqlite3* db, const char* sql, const std::string& arg) {
     Stmt s(db, sql);
@@ -280,19 +305,15 @@ void Store::upsertLists(std::span<const List> lists) {
 void Store::upsertCards(std::span<const Card> cards) {
     std::lock_guard lk(*mu_);
     Tx tx(db_);
-    Stmt s(db_, (std::string("INSERT OR REPLACE INTO cards(") + kCardCols +
-                 ") VALUES(?,?,?,?,?,?,?,?,?)")
+    Stmt s(db_, (std::string("INSERT INTO cards(") + kCardCols +
+                 ") VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                 "list_id=excluded.list_id, name=excluded.name, desc=excluded.desc, pos=excluded.pos, "
+                 "label_ids=excluded.label_ids, member_ids=excluded.member_ids, "
+                 "comment_count=excluded.comment_count, "
+                 "date_last_activity=excluded.date_last_activity, " + kKeepShortLink)
                     .c_str());
     for (const auto& c : cards) {
-        s.text(1, c.id);
-        s.text(2, c.listId);
-        s.text(3, c.name);
-        s.text(4, c.desc);
-        s.real(5, c.pos);
-        s.text(6, nlohmann::json(c.labelIds).dump());
-        s.text(7, nlohmann::json(c.memberIds).dump());
-        s.integer(8, c.commentCount);
-        s.text(9, c.dateLastActivity);
+        bindCard(s, c);
         s.run();
     }
     tx.commit();
@@ -326,6 +347,15 @@ std::vector<Card> Store::cards(const std::string& listId) {
     std::vector<Card> out;
     while (s.step()) out.push_back(cardFromRow(s));
     return out;
+}
+
+std::optional<Card> Store::cardByShortLink(const std::string& shortLink) {
+    if (shortLink.empty()) return std::nullopt;
+    std::lock_guard lk(*mu_);
+    Stmt s(db_, (std::string("SELECT ") + kCardCols + " FROM cards WHERE short_link = ?").c_str());
+    s.text(1, shortLink);
+    if (!s.step()) return std::nullopt;
+    return cardFromRow(s);
 }
 
 std::optional<Card> Store::card(const std::string& id) {
@@ -380,23 +410,15 @@ void Store::upsertCardSummaries(std::span<const Card> cards) {
     std::lock_guard lk(*mu_);
     Tx tx(db_);
     Stmt s(db_, (std::string("INSERT INTO cards(") + kCardCols +
-                 ") VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+                 ") VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                  "list_id=excluded.list_id, name=excluded.name, pos=excluded.pos, "
                  "label_ids=excluded.label_ids, member_ids=excluded.member_ids, "
                  "comment_count=excluded.comment_count, "
-                 "date_last_activity=excluded.date_last_activity "
-                 "WHERE cards.id NOT IN (SELECT card_id FROM pending_ops)")
+                 "date_last_activity=excluded.date_last_activity, " + kKeepShortLink +
+                 " WHERE cards.id NOT IN (SELECT card_id FROM pending_ops)")
                     .c_str());
     for (const auto& c : cards) {
-        s.text(1, c.id);
-        s.text(2, c.listId);
-        s.text(3, c.name);
-        s.text(4, c.desc);
-        s.real(5, c.pos);
-        s.text(6, nlohmann::json(c.labelIds).dump());
-        s.text(7, nlohmann::json(c.memberIds).dump());
-        s.integer(8, c.commentCount);
-        s.text(9, c.dateLastActivity);
+        bindCard(s, c);
         s.run();
     }
     tx.commit();

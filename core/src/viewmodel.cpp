@@ -1,10 +1,11 @@
 #include "cardinal/viewmodel.h"
 
-#include "cardinal/image_refs.h"
+#include "cardinal/markdown.h"
 
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <map>
 #include <set>
 
 namespace cardinal {
@@ -59,6 +60,10 @@ struct AppServices : std::enable_shared_from_this<AppServices> {
     };
     std::shared_ptr<UiCell> uiCell = std::make_shared<UiCell>();
     std::weak_ptr<Observable<AppStatus>> statusCell;
+
+    // Links to cards not in the cache, looked up on Trello once per run (by shortLink).
+    std::mutex linksMu;
+    std::map<std::string, CardLink> remoteLinks;
 
     // ---- plumbing ----
 
@@ -562,6 +567,46 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
         });
     }
 
+    // The cards `card`'s text links to: from the cache, else looked up on Trello in the background
+    // (the panel is rebuilt when the answer comes).
+    std::vector<CardLink> linkedCards(const Card& card, const std::vector<CommentRow>& comments) {
+        std::vector<std::string> links = md::cardShortLinksIn(card.desc);
+        for (const auto& c : comments)
+            for (auto& l : md::cardShortLinksIn(c.text))
+                if (!has(links, l)) links.push_back(std::move(l));
+        std::vector<CardLink> out;
+        for (const auto& sl : links) {
+            if (sl == card.shortLink) {
+                out.push_back({sl, card.id, card.name, CardLink::Status::Resolved});
+            } else if (auto c = svc->store.cardByShortLink(sl)) {
+                out.push_back({sl, c->id, c->name, CardLink::Status::Resolved});
+            } else {
+                std::lock_guard lk(svc->linksMu);
+                auto [it, fresh] = svc->remoteLinks.try_emplace(sl, CardLink{sl, "", "", CardLink::Status::Pending});
+                out.push_back(it->second);
+                if (fresh) lookUp(sl);
+            }
+        }
+        return out;
+    }
+
+    void lookUp(const std::string& shortLink) {
+        svc->postWork([svc = svc.get(), weak = weak_from_this(), shortLink] {
+            CardLink link{shortLink, "", "", CardLink::Status::Missing};
+            try {
+                Card c = svc->api.cardByLink(shortLink).get();
+                if (!c.id.empty()) link = {shortLink, c.id, c.name, CardLink::Status::Resolved};
+            } catch (const std::exception&) {
+                // not found, no access, or offline: shown as a plain link to the browser
+            }
+            {
+                std::lock_guard lk(svc->linksMu);
+                svc->remoteLinks[shortLink] = link;
+            }
+            if (auto self = weak.lock()) self->schedule();
+        });
+    }
+
     void rebuild() {
         std::string id;
         bool wasRemoved;
@@ -589,7 +634,6 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
             s.cardId = id;
             s.title = card->name;
             s.description = card->desc;
-            s.descriptionImages = imageUrlsIn(card->desc);
 
             std::map<std::string, LabelChip> labelById;
             std::map<std::string, MemberChip> memberById;
@@ -608,7 +652,7 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
             for (const auto& mid : card->memberIds)
                 if (memberById.count(mid)) s.members.push_back(memberById[mid]);
             for (const auto& c : engine.comments(id)) {
-                CommentRow row{c.id, "", "", c.text, c.date, isTemp(c.id), imageUrlsIn(c.text)};
+                CommentRow row{c.id, "", "", c.text, c.date, isTemp(c.id)};
                 auto it = memberById.find(c.authorId);
                 if (it != memberById.end()) {
                     row.authorName = it->second.fullName;
@@ -616,6 +660,7 @@ struct CardPanelVM::Core : Listener, std::enable_shared_from_this<Core> {
                 }
                 s.comments.push_back(std::move(row));
             }
+            s.linkedCards = linkedCards(*card, s.comments);
             if (auto extras = engine.extras(id)) {
                 s.extrasLoaded = true;
                 s.checklists = extras->checklists;

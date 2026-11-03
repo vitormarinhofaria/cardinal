@@ -11,7 +11,7 @@ namespace {
 using nlohmann::json;
 using Params = std::vector<std::pair<std::string, std::string>>;
 
-constexpr const char* kCardListFields = "name,idList,pos,idLabels,idMembers,dateLastActivity,badges";
+constexpr const char* kCardListFields = "name,idList,pos,idLabels,idMembers,dateLastActivity,badges,shortLink";
 constexpr const char* kActionFilter =
     "commentCard,createCard,updateCard,deleteCard,copyCard,moveCardToBoard,moveCardFromBoard,"
     "addLabelToCard,removeLabelFromCard,addMemberToCard,removeMemberFromCard,createList,updateList";
@@ -206,6 +206,13 @@ std::future<CardFields> TrelloApi::cardFields(const std::string& cardId) {
                     Card c = parseCard(j);
                     return CardFields{c.name, c.desc, c.dateLastActivity};
                 });
+}
+
+std::future<Card> TrelloApi::cardByLink(const std::string& shortLink) {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Get,
+                                  url("/cards/" + urlEncode(shortLink), {{"fields", "name,idList,shortLink"}})),
+                [](const json& j) { return parseCard(j); });
 }
 
 std::future<std::vector<Action>> TrelloApi::actionsSince(const std::string& boardId,

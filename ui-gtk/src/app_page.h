@@ -60,6 +60,8 @@ private:
     GtkWidget* content_;  // holds the board, or a loading page
     GtkWidget* dialog_ = nullptr;  // the open card, if any
     bool pressedOutside_ = false;
+    // Cleared when this is destroyed: deferred callbacks (opening a linked card) check it.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 }  // namespace cardinal::gtk

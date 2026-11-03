@@ -91,6 +91,7 @@ AppPage::AppPage(AppModel& model, ImageCache* images, std::string dataDir, std::
 }
 
 AppPage::~AppPage() {
+    *alive_ = false;
     picker_->state().changed.disconnect(pickerConn_);
     model_.status().changed.disconnect(statusConn_);
     if (boardVm_ && headerConn_) boardVm_->header().changed.disconnect(headerConn_);
@@ -215,7 +216,19 @@ void AppPage::openCard(const std::string& cardId) {
         onDialogClosed();
     }
     auto vm = model_.openCard(cardId);
-    panel_ = std::make_unique<CardPanel>(vm, &images_, [this] { closeCard(); });
+    // A link to another card opens it in place of this one, once the click's handlers are done.
+    auto openLinked = [this](const std::string& id) {
+        struct Pending {
+            AppPage* page;
+            std::shared_ptr<bool> alive;
+            std::string cardId;
+        };
+        g_idle_add_once([](gpointer d) {
+            std::unique_ptr<Pending> p(static_cast<Pending*>(d));
+            if (*p->alive) p->page->openCard(p->cardId);
+        }, new Pending{this, alive_, id});
+    };
+    panel_ = std::make_unique<CardPanel>(vm, &images_, [this] { closeCard(); }, openLinked);
 
     dialog_ = GTK_WIDGET(adw_dialog_new());
     adw_dialog_set_child(ADW_DIALOG(dialog_), panel_->widget());

@@ -66,6 +66,7 @@ def build(cards_total, seed):
                 "idMembers": rnd.sample([m[0] for m in members], rnd.choice([0, 1, 1, 2])),
                 "dateLastActivity": iso(now - rnd.randint(0, 90 * 86400)),
                 "closed": False,
+                "shortLink": "sl%06d" % n,
             }
             cs = []
             for k in range(rnd.choice([0, 0, 1, 2, 4])):
@@ -77,6 +78,11 @@ def build(cards_total, seed):
                                  % (cid, cid))
                 cs.append({"id": "a%d_img" % n, "idMemberCreator": members[1][0], "date": iso(now - 3600),
                            "data": {"text": "Olha o erro:\n\n![erro.png](@BASE@/1/img/erro%d.png)\n\nacontece sempre." % n}})
+            if n == 1:  # the markdown Trello users write, with links to other cards
+                card["desc"] += MARKDOWN_SAMPLE % {"last": cards_total}
+                cs.append({"id": "a1_md", "idMemberCreator": members[2][0], "date": iso(now - 600),
+                           "data": {"text": "Relacionado: https://trello.com/c/sl000002/2-card\n\n"
+                                            "Ver também [o card antigo](https://trello.com/c/sl%06d) e `make test`." % cards_total}})
             cards[cid] = card
             comments[cid] = cs
             lists[lid]["cards"].append(cid)
@@ -84,6 +90,45 @@ def build(cards_total, seed):
         boards={"b1": {"id": "b1", "name": "Produto", "closed": False}},
         labels=labels, members=members, lists=lists, cards=cards, comments=comments, seq=n,
     )
+
+
+MARKDOWN_SAMPLE = """
+
+## Contexto
+
+O login **SSO** falha com _alguns_ provedores. Passos:
+
+1. Abrir a tela de login
+2. Escolher ~~Google~~ Microsoft
+   - com conta corporativa
+   - sem MFA
+3. Ver o erro
+
+- [x] Reproduzido
+- [ ] Corrigido
+
+> O erro aparece só em produção.
+> > Confirmado pelo suporte.
+
+```
+GET /oauth/callback?code=...
+HTTP/1.1 500
+```
+
+| Provedor | Status |
+|---|---|
+| Google | ok |
+| Microsoft | **falha** |
+
+Docs: https://example.com/sso e [guia interno](https://example.com/guia).
+
+https://trello.com/c/sl000002/2-card-relacionado
+
+Depende também de https://trello.com/c/sl%(last)06d e de https://trello.com/c/zzzz9999 (apagado).
+
+---
+
+<b>HTML</b> não é interpretado."""
 
 
 PNG_CACHE = {}
@@ -237,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
             lst = S["lists"][form["idList"]]
             last = max([S["cards"][c]["pos"] for c in lst["cards"]] or [0])
             card = {"id": cid, "idList": lst["id"], "name": form["name"], "desc": "", "pos": last + 65536.0,
+                    "shortLink": "sl%06d" % S["seq"],
                     "idLabels": [], "idMembers": [], "dateLastActivity": iso(), "closed": False,
                     "badges": {"comments": 0}}
             S["cards"][cid] = card
@@ -244,6 +290,8 @@ class Handler(BaseHTTPRequestHandler):
             lst["cards"].append(cid)
             return self.reply(200, card)
         cid = parts[2]
+        if cid not in S["cards"]:  # Trello takes a card's shortLink wherever it takes its id
+            cid = next((c["id"] for c in S["cards"].values() if c.get("shortLink") == cid), cid)
         card = S["cards"][cid]
         sub = parts[3:]
         if not sub and method == "GET":

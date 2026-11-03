@@ -18,7 +18,7 @@ FROM $base_image
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config dpkg-dev file \
-        libcurl4-openssl-dev libsqlite3-dev nlohmann-json3-dev libsecret-1-dev \
+        libcurl4-openssl-dev libsqlite3-dev nlohmann-json3-dev libsecret-1-dev libmd4c-dev \
         libgtk-4-dev libadwaita-1-dev libgtest-dev libgmock-dev \
     && rm -rf /var/lib/apt/lists/*
 DOCKERFILE

@@ -55,11 +55,3 @@ TEST(ImageRefs, ImageAttachments) {
     EXPECT_FALSE(isImageAttachment(link));
 }
 
-TEST(ImageRefs, WithoutMarkdownImages) {
-    EXPECT_EQ(withoutMarkdownImages("veja:\n\n![image.png](https://trello.com/x/image.png \"t\")\n\nobrigado"),
-              "veja:\n\nobrigado");
-    EXPECT_EQ(withoutMarkdownImages("![a](https://x.com/a.png)"), "");
-    EXPECT_EQ(withoutMarkdownImages("texto [link](https://x.com) fica ![](<https://x.com/b c.png>)!"),
-              "texto [link](https://x.com) fica !");
-    EXPECT_EQ(withoutMarkdownImages("sem imagem ![alt]\n(x)"), "sem imagem ![alt]\n(x)");
-}

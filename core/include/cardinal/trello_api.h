@@ -53,6 +53,8 @@ public:
     std::future<CardCore> cardCore(const std::string& cardId);
     std::future<CardExtras> cardExtras(const std::string& cardId);
     std::future<CardFields> cardFields(const std::string& cardId);
+    // A card named by its URL id (trello.com/c/<shortLink>): enough to show and open a link to it.
+    std::future<Card> cardByLink(const std::string& shortLink);
     std::future<std::vector<Action>> actionsSince(const std::string& boardId,
                                                   const std::string& iso);
 

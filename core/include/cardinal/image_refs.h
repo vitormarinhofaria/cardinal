@@ -18,8 +18,4 @@ bool isImageAttachment(const Attachment& a);
 // http(s) links to an image file, in order of appearance, without repeats. Only http(s) URLs.
 std::vector<std::string> imageUrlsIn(std::string_view text);
 
-// `text` without its markdown images (`![alt](url)`), for showing it next to their thumbnails.
-// Blank lines left behind are collapsed and the result is trimmed.
-std::string withoutMarkdownImages(std::string_view text);
-
 }  // namespace cardinal

@@ -51,6 +51,7 @@ struct Card {
     std::vector<std::string> memberIds;
     int commentCount = 0;
     std::string dateLastActivity;
+    std::string shortLink;  // the id in its URL (trello.com/c/<shortLink>); empty if never fetched
     bool closed = false;  // archived; only seen on direct fetches, never cached
 };
 

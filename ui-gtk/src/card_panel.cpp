@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "cardinal/image_refs.h"
+#include "markdown_view.h"
 
 namespace cardinal::gtk {
 namespace {
@@ -50,8 +51,8 @@ std::string trimmed(const std::string& s) {
 GtkWidget* section(const char* title) { return label(title, "section-title"); }
 
 constexpr int kAttachmentThumb = 120;
-constexpr int kDescriptionThumb = 96;
-constexpr int kCommentThumb = 64;
+constexpr int kDescriptionPicture = 520;  // px, the description column is at most 560 wide
+constexpr int kCommentPicture = 240;
 
 GtkWidget* flow(int spacing) {
     GtkWidget* f = gtk_flow_box_new();
@@ -63,13 +64,6 @@ GtkWidget* flow(int spacing) {
     gtk_widget_set_halign(f, GTK_ALIGN_START);
     addClass(f, "thumb-strip");
     return f;
-}
-
-std::string fileNameOf(const std::string& url) {
-    const size_t cut = url.find_first_of("?#");
-    const std::string path = url.substr(0, cut);
-    const size_t slash = path.rfind('/');
-    return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
 GtkWidget* textArea(GtkTextBuffer** bufferOut, int minHeight) {
@@ -119,8 +113,9 @@ void clearListBox(GtkWidget* list) {
 
 }  // namespace
 
-CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::function<void()> onClose)
-    : vm_(std::move(vm)), images_(images), onClose_(std::move(onClose)) {
+CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::function<void()> onClose,
+                     std::function<void(const std::string& cardId)> onOpenCard)
+    : vm_(std::move(vm)), images_(images), onClose_(std::move(onClose)), onOpenCard_(std::move(onOpenCard)) {
     // ---- header: title + close
     GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_margin_top(header, 16);
@@ -274,11 +269,40 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::
     gtk_box_append(GTK_BOX(meta), membersRow);
     gtk_box_append(GTK_BOX(meta), labelsRow);
 
-    gtk_box_append(GTK_BOX(main_), section("Descrição"));
+    // The description shows rendered; a click on it (or "Editar") swaps in the markdown source.
+    GtkWidget* descHeader = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget* descTitle = section("Descrição");
+    gtk_widget_set_hexpand(descTitle, TRUE);
+    gtk_box_append(GTK_BOX(descHeader), descTitle);
+    descEditButton_ = gtk_button_new_with_label("Editar");
+    addClass(descEditButton_, "flat");
+    gtk_widget_set_valign(descEditButton_, GTK_ALIGN_END);
+    on(descEditButton_, "clicked", [this] { startDescriptionEdit(); });
+    gtk_box_append(GTK_BOX(descHeader), descEditButton_);
+    gtk_box_append(GTK_BOX(main_), descHeader);
+
+    descRendered_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    addClass(descRendered_, "description-rendered");
+    gtk_widget_set_tooltip_text(descRendered_, "Clique para editar");
+    // Links, pictures and card chips claim their own clicks; one on the text edits.
+    GtkGesture* descClick = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(descClick), GDK_BUTTON_PRIMARY);
+    g_signal_connect_data(descClick, "released", G_CALLBACK(+[](GtkGestureClick* g, int, double x, double y, gpointer d) {
+        auto* self = static_cast<CardPanel*>(d);
+        GtkWidget* hit = gtk_widget_pick(self->descRendered_, x, y, GTK_PICK_DEFAULT);
+        if (hit && (gtk_widget_get_ancestor(hit, GTK_TYPE_BUTTON) ||
+                    (GTK_IS_LABEL(hit) && gtk_label_get_current_uri(GTK_LABEL(hit)))))
+            return;  // a link, picture or card chip: it handles the click
+        gtk_gesture_set_state(GTK_GESTURE(g), GTK_EVENT_SEQUENCE_CLAIMED);
+        self->startDescriptionEdit();
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(descRendered_, GTK_EVENT_CONTROLLER(descClick));
+
+    GtkWidget* descEditor = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     GtkWidget* descScroll = textArea(&descBuffer_, 96);
     descView_ = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(descScroll), "view"));
     on(descBuffer_, "changed", [this] { descriptionEdited(); });
-    gtk_box_append(GTK_BOX(main_), descScroll);
+    gtk_box_append(GTK_BOX(descEditor), descScroll);
     descButtons_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(descButtons_, GTK_ALIGN_END);
     GtkWidget* save = gtk_button_new_with_label("Salvar");
@@ -288,10 +312,15 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::
     on(revert, "clicked", [this] { revertDescription(); });
     gtk_box_append(GTK_BOX(descButtons_), revert);
     gtk_box_append(GTK_BOX(descButtons_), save);
-    gtk_widget_set_visible(descButtons_, FALSE);
-    gtk_box_append(GTK_BOX(main_), descButtons_);
-    descImagesBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);  // pictures the description shows
-    gtk_box_append(GTK_BOX(main_), descImagesBox_);
+    gtk_box_append(GTK_BOX(descEditor), descButtons_);
+
+    descStack_ = gtk_stack_new();
+    gtk_stack_set_vhomogeneous(GTK_STACK(descStack_), FALSE);
+    gtk_stack_set_hhomogeneous(GTK_STACK(descStack_), FALSE);
+    gtk_stack_add_named(GTK_STACK(descStack_), descRendered_, "view");
+    gtk_stack_add_named(GTK_STACK(descStack_), descEditor, "edit");
+    gtk_stack_set_visible_child_name(GTK_STACK(descStack_), "view");
+    gtk_box_append(GTK_BOX(main_), descStack_);
 
     extrasSpinner_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget* sp = gtk_spinner_new();
@@ -397,6 +426,21 @@ void CardPanel::setNarrow(bool narrow) {
     gtk_widget_set_size_request(side_, narrow ? -1 : 300, -1);
 }
 
+void CardPanel::showDescriptionEditor(bool edit) {
+    descEditorOpen_ = edit;
+    gtk_stack_set_visible_child_name(GTK_STACK(descStack_), edit ? "edit" : "view");
+    gtk_widget_set_visible(descEditButton_, !edit);
+}
+
+void CardPanel::startDescriptionEdit() {
+    if (descEditorOpen_ || !gtk_widget_is_sensitive(content_)) return;
+    showDescriptionEditor(true);
+    gtk_widget_grab_focus(descView_);
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(descBuffer_, &end);
+    gtk_text_buffer_place_cursor(descBuffer_, &end);
+}
+
 std::string CardPanel::descriptionText() const { return textOf(descBuffer_); }
 
 void CardPanel::setDescriptionText(const std::string& text) {
@@ -420,14 +464,17 @@ void CardPanel::descriptionEdited() {
         descBase_ = shownDescription_;  // the text the user saw when they started typing
     }
     if (!dirty) editingDesc_ = false;
-    gtk_widget_set_visible(descButtons_, dirty);
 }
 
 void CardPanel::saveDescription() {
-    vm_->setDescription(descriptionText(), descBase_);
+    const std::string text = descriptionText();
+    if (text != shownDescription_) {
+        vm_->setDescription(text, editingDesc_ ? descBase_ : shownDescription_);
+        renderDescription(text);  // show it now, not when the write comes back
+    }
     editingDesc_ = false;
     remoteChangedWhileEditing_ = false;
-    gtk_widget_set_visible(descButtons_, FALSE);
+    showDescriptionEditor(false);
     updateNotice(vm_->state().get());
 }
 
@@ -435,7 +482,7 @@ void CardPanel::revertDescription() {
     setDescriptionText(shownDescription_);
     editingDesc_ = false;
     remoteChangedWhileEditing_ = false;
-    gtk_widget_set_visible(descButtons_, FALSE);
+    showDescriptionEditor(false);
     updateNotice(vm_->state().get());
 }
 
@@ -491,51 +538,66 @@ void CardPanel::update(const CardPanelState& s) {
     gtk_label_set_text(GTK_LABEL(listName_), s.listName.empty() ? "" : ("na lista " + s.listName).c_str());
     gtk_widget_set_visible(listName_, !s.listName.empty());
 
-    // never clobber what the user is typing; follow remote changes only when nothing is pending
-    if (s.description != shownDescription_) {
-        const bool editing = descriptionText() != shownDescription_;
-        shownDescription_ = s.description;
-        if (!editing) {
-            setDescriptionText(s.description);
-            gtk_widget_set_visible(descButtons_, FALSE);
-        } else {
-            gtk_widget_set_visible(descButtons_, descriptionText() != shownDescription_);
-            remoteChangedWhileEditing_ = true;  // saving now would overwrite their change
-        }
-    }
-
     updateLabels(s);
     updateMembers(s);
     updateExtras(s);  // before the comments and description: they use its previews
-    updateDescriptionImages(s);
+    if (s.linkedCards != shownLinkedCards_) {
+        shownLinkedCards_ = s.linkedCards;
+        ++renderVersion_;
+    }
+    updateDescription(s);
     updateComments(s);
 }
 
-std::string CardPanel::thumbUrlFor(const std::string& url) const {
+std::optional<std::string> CardPanel::pictureUrlFor(const std::string& url) const {
     for (const auto& a : shownAttachments_)
         if (a.url == url && !a.previewUrl.empty()) return a.previewUrl;
+    if (!shownExtrasLoaded_ && url.find("/attachments/") != std::string::npos) return std::nullopt;
     return url;
 }
 
-GtkWidget* CardPanel::thumbStrip(const std::vector<std::string>& urls, int side) const {
-    GtkWidget* strip = nullptr;
-    for (const auto& url : urls) {
-        const std::string thumb = thumbUrlFor(url);
-        if (thumb == url && !shownExtrasLoaded_ && url.find("/attachments/") != std::string::npos) continue;
-        if (!strip) strip = flow(6);
-        gtk_flow_box_append(GTK_FLOW_BOX(strip), images_->thumbnail(thumb, side, url, fileNameOf(url)));
-    }
-    return strip;
+MarkdownContext CardPanel::markdownContext(int pictureWidth, bool selectable) const {
+    MarkdownContext ctx;
+    ctx.images = images_;
+    ctx.pictureUrl = [this](const std::string& url) { return pictureUrlFor(url); };  // used while rendering only
+    ctx.cards = &shownLinkedCards_;
+    ctx.openCard = onOpenCard_;
+    ctx.pictureWidth = pictureWidth;
+    ctx.selectable = selectable;
+    return ctx;
 }
 
-void CardPanel::updateDescriptionImages(const CardPanelState& s) {
-    if (s.descriptionImages == shownDescImages_ && descImagesVersion_ == attachmentsVersion_) return;
-    shownDescImages_ = s.descriptionImages;
-    descImagesVersion_ = attachmentsVersion_;
-    clearChildren(descImagesBox_);
-    if (!images_ || s.descriptionImages.empty()) return;
-    if (GtkWidget* strip = thumbStrip(s.descriptionImages, kDescriptionThumb))
-        gtk_box_append(GTK_BOX(descImagesBox_), strip);
+void CardPanel::renderDescription(const std::string& text) {
+    renderedDescription_ = text;
+    descRenderVersion_ = renderVersion_;
+    clearChildren(descRendered_);
+    if (trimmed(text).empty()) {
+        GtkWidget* hint = label("Adicione uma descrição mais detalhada…", "dim-label");
+        addClass(hint, "md-placeholder");
+        gtk_box_append(GTK_BOX(descRendered_), hint);
+        return;
+    }
+    gtk_box_append(GTK_BOX(descRendered_), renderMarkdown(text, markdownContext(kDescriptionPicture, false)));
+}
+
+void CardPanel::updateDescription(const CardPanelState& s) {
+    if (s.description != shownDescription_) {
+        shownDescription_ = s.description;
+        const std::string typed = descriptionText();
+        if (!descEditorOpen_ && !editingDesc_) {
+            setDescriptionText(s.description);
+        } else if (typed == s.description) {
+            editingDesc_ = false;  // what they typed is what is saved now
+        } else if (editingDesc_) {
+            // never clobber what the user is typing: saving now would overwrite their change
+            remoteChangedWhileEditing_ = true;
+            updateNotice(s);
+        } else {
+            setDescriptionText(s.description);  // the editor is open but untouched: follow
+        }
+    }
+    if (s.description == renderedDescription_ && descRenderVersion_ == renderVersion_) return;
+    renderDescription(s.description);
 }
 
 void CardPanel::updateNotice(const CardPanelState& s) {
@@ -626,10 +688,11 @@ void CardPanel::updateMembers(const CardPanelState& s) {
 }
 
 void CardPanel::updateComments(const CardPanelState& s) {
-    // The attachment list decides which preview a comment's picture uses (see thumbStrip).
-    if (s.comments == shownComments_ && commentsVersion_ == attachmentsVersion_) return;
+    // The attachment list decides which preview a comment's picture uses (see pictureUrlFor).
+    if (s.comments == shownComments_ && commentsVersion_ == renderVersion_) return;
     shownComments_ = s.comments;
-    commentsVersion_ = attachmentsVersion_;
+    commentsVersion_ = renderVersion_;
+    const MarkdownContext ctx = markdownContext(kCommentPicture, true);
     clearChildren(commentsBox_);
     for (const auto& c : s.comments) {
         GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -643,22 +706,10 @@ void CardPanel::updateComments(const CardPanelState& s) {
         GtkWidget* name = label(c.authorName.empty() ? "Alguém" : c.authorName, "heading");
         gtk_box_append(GTK_BOX(head), name);
         gtk_box_append(GTK_BOX(head), label(c.sending ? "enviando…" : formatDate(c.date), "dim-label"));
-        const bool pictures = images_ && !c.images.empty();
-        const std::string shown = pictures ? withoutMarkdownImages(c.text) : c.text;
-        GtkWidget* text = label(shown);
-        gtk_widget_set_visible(text, !shown.empty());
-        gtk_label_set_wrap(GTK_LABEL(text), TRUE);
-        gtk_label_set_wrap_mode(GTK_LABEL(text), PANGO_WRAP_WORD_CHAR);
-        gtk_label_set_selectable(GTK_LABEL(text), TRUE);
-        gtk_label_set_width_chars(GTK_LABEL(text), 1);
-        gtk_label_set_max_width_chars(GTK_LABEL(text), 1);
+        GtkWidget* text = renderMarkdown(c.text, ctx);
         gtk_widget_set_hexpand(text, TRUE);
         gtk_box_append(GTK_BOX(bubble), head);
         gtk_box_append(GTK_BOX(bubble), text);
-        if (GtkWidget* strip = pictures ? thumbStrip(c.images, kCommentThumb) : nullptr) {
-            gtk_widget_set_margin_top(strip, 4);
-            gtk_box_append(GTK_BOX(bubble), strip);
-        }
         if (c.sending) addClass(row, "comment-sending");
         gtk_box_append(GTK_BOX(row), who);
         gtk_box_append(GTK_BOX(row), bubble);
@@ -669,7 +720,7 @@ void CardPanel::updateComments(const CardPanelState& s) {
 void CardPanel::updateExtras(const CardPanelState& s) {
     if (s.extrasLoaded != shownExtrasLoaded_) {
         shownExtrasLoaded_ = s.extrasLoaded;
-        ++attachmentsVersion_;
+        ++renderVersion_;
         gtk_widget_set_visible(extrasSpinner_, !s.extrasLoaded);
     }
     if (s.checklists != shownChecklists_) {
@@ -692,7 +743,7 @@ void CardPanel::updateExtras(const CardPanelState& s) {
     }
     if (s.attachments != shownAttachments_) {
         shownAttachments_ = s.attachments;
-        ++attachmentsVersion_;
+        ++renderVersion_;
         clearChildren(attachmentsBox_);
         if (!s.attachments.empty()) gtk_box_append(GTK_BOX(attachmentsBox_), section("Anexos"));
         GtkWidget* pictures = images_ ? flow(10) : nullptr;

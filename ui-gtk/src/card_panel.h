@@ -8,6 +8,7 @@
 #include "cardinal/viewmodel.h"
 #include "gtk_util.h"
 #include "image_loader.h"
+#include "markdown_view.h"
 
 namespace cardinal::gtk {
 
@@ -16,7 +17,9 @@ namespace cardinal::gtk {
 class CardPanel {
 public:
     // `images` (not owned, may be null) shows the pictures of attachments, description, comments.
-    CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::function<void()> onClose);
+    // `onOpenCard` opens another card (a link to it was clicked); this panel is closed by then.
+    CardPanel(std::shared_ptr<CardPanelVM> vm, ImageLoader* images, std::function<void()> onClose,
+              std::function<void(const std::string& cardId)> onOpenCard);
     ~CardPanel();
     GtkWidget* widget() const { return root_; }
     // Narrow dialog: stack the two columns, labels and members on top.
@@ -31,6 +34,7 @@ public:
     void saveDescription();
     void revertDescription();
     void descriptionEdited();
+    void startDescriptionEdit();
 
     // Development aid (CARDINAL_SELFTEST=1): drives the same handlers a user would.
     void selfTest();
@@ -43,18 +47,21 @@ private:
     void updateMembers(const CardPanelState& s);
     void updateComments(const CardPanelState& s);
     void updateExtras(const CardPanelState& s);
-    void updateDescriptionImages(const CardPanelState& s);
-    // The URL to fetch for a thumbnail of `url`: Trello's scaled preview when it is an attachment.
-    std::string thumbUrlFor(const std::string& url) const;
-    // Pictures of `urls` ready to show now. A Trello attachment waits for the attachment list, so
-    // its small preview is fetched rather than the (much bigger) original. Null if none is ready.
-    GtkWidget* thumbStrip(const std::vector<std::string>& urls, int side) const;
+    void updateDescription(const CardPanelState& s);
+    void renderDescription(const std::string& text);
+    void showDescriptionEditor(bool edit);
+    // The URL to fetch for a picture of `url`: Trello's scaled preview when it is an attachment.
+    // Nullopt while a Trello attachment waits for the attachment list, so its small preview is
+    // fetched rather than the (much bigger) original.
+    std::optional<std::string> pictureUrlFor(const std::string& url) const;
+    MarkdownContext markdownContext(int pictureWidth, bool selectable) const;
     std::string descriptionText() const;
     void setDescriptionText(const std::string& text);
 
     std::shared_ptr<CardPanelVM> vm_;
     ImageLoader* images_;
     std::function<void()> onClose_;
+    std::function<void(const std::string&)> onOpenCard_;
     int conn_ = 0;
     bool tracedReady_ = false;
 
@@ -73,6 +80,9 @@ private:
     GtkWidget* membersBox_;
     GtkWidget* addMemberButton_;
     GtkWidget* addMemberList_;
+    GtkWidget* descStack_;     // "view": the rendered markdown, "edit": the text box
+    GtkWidget* descRendered_;  // holds the rendered description
+    GtkWidget* descEditButton_;
     GtkWidget* descView_;
     GtkTextBuffer* descBuffer_;
     GtkWidget* descButtons_;
@@ -83,7 +93,6 @@ private:
     GtkWidget* extrasSpinner_;
     GtkWidget* checklistsBox_;
     GtkWidget* attachmentsBox_;
-    GtkWidget* descImagesBox_;
     GtkWidget* content_;
     GtkWidget* columns_;
     GtkWidget* main_;   // description, checklists, attachments, comments
@@ -94,6 +103,7 @@ private:
     std::string shownTitle_;
     std::string shownDescription_;
     bool settingText_ = false;
+    bool descEditorOpen_ = false;            // the text box shows instead of the rendering
     bool editingDesc_ = false;               // the user changed the description box
     std::string descBase_;                   // what it said when they started
     std::string titleBase_;                  // same for the title
@@ -105,11 +115,12 @@ private:
     std::vector<CommentRow> shownComments_;
     std::vector<Checklist> shownChecklists_;
     std::vector<Attachment> shownAttachments_;
-    std::vector<std::string> shownDescImages_;
-    // Bumped when the attachments or extrasLoaded change: the pictures in the description and the
-    // comments depend on both (see thumbStrip) and are rebuilt when it moves.
-    int attachmentsVersion_ = 0;
-    int descImagesVersion_ = -1;
+    std::vector<CardLink> shownLinkedCards_;
+    // Bumped when the attachments, extrasLoaded or the linked cards change: the rendered
+    // description and comments depend on them (see pictureUrlFor) and are rebuilt when it moves.
+    int renderVersion_ = 0;
+    std::string renderedDescription_;
+    int descRenderVersion_ = -1;
     int commentsVersion_ = -1;
     std::vector<PanelNotice> shownNotices_;
     CardPanelState::Status shownStatus_ = CardPanelState::Status::Loading;

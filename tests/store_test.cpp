@@ -432,3 +432,22 @@ TEST_F(StoreTest, AttachmentsKeepOrderAndAllFieldsAndGoWithTheCard) {
     s.deleteCard("c1");
     EXPECT_TRUE(s.attachments("c1").empty());
 }
+
+TEST_F(StoreTest, CardsAreFoundByShortLinkWhichAWriteResponseDoesNotErase) {
+    Store s = Store::open(path_);
+    Card c = makeCard("c1", "l1", "Login");
+    c.shortLink = "AbC123xy";
+    std::vector<Card> in{c};
+    s.upsertCardSummaries(in);
+    ASSERT_TRUE(s.cardByShortLink("AbC123xy").has_value());
+    EXPECT_EQ(s.cardByShortLink("AbC123xy")->id, "c1");
+    EXPECT_FALSE(s.cardByShortLink("").has_value());
+    EXPECT_FALSE(s.cardByShortLink("outro").has_value());
+
+    // the answer to a PUT carries no shortLink: the known one stays
+    std::vector<Card> renamed{makeCard("c1", "l1", "Login novo")};
+    s.upsertCards(renamed);
+    s.upsertCardSummaries(renamed);
+    EXPECT_EQ(s.card("c1")->shortLink, "AbC123xy");
+    EXPECT_EQ(s.cardByShortLink("AbC123xy")->name, "Login novo");
+}

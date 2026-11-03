@@ -70,6 +70,7 @@ public:
     std::vector<List> lists(const std::string& boardId);
     std::vector<Card> cards(const std::string& listId);
     std::optional<Card> card(const std::string& id);
+    std::optional<Card> cardByShortLink(const std::string& shortLink);
 
     void setSyncCursor(const std::string& boardId, const std::string& iso);
     std::optional<std::string> syncCursor(const std::string& boardId);
