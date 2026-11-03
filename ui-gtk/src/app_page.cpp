@@ -218,7 +218,7 @@ void AppPage::openCard(const std::string& cardId) {
 
     dialog_ = GTK_WIDGET(adw_dialog_new());
     adw_dialog_set_child(ADW_DIALOG(dialog_), panel_->widget());
-    adw_dialog_set_content_width(ADW_DIALOG(dialog_), 768);
+    adw_dialog_set_content_width(ADW_DIALOG(dialog_), 960);
     adw_dialog_set_content_height(ADW_DIALOG(dialog_), 720);
     gtk_widget_set_size_request(dialog_, 360, 320);  // breakpoints need a minimum size
     // Narrow window: one column, labels and members first.

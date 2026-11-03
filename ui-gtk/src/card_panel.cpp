@@ -176,8 +176,8 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
         updateNotice(vm_->state().get());
     });
 
-    // ---- content: list name, then two columns like Trello's card modal: the card's body on the
-    // left, labels and members on a narrow column at the right.
+    // ---- content: list name, then two columns like Trello's card modal: the card's body
+    // (members, labels, description, checklists, attachments) on the left, comments at the right.
     content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_margin_start(content_, 20);
     gtk_widget_set_margin_end(content_, 20);
@@ -195,7 +195,7 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     adw_clamp_set_child(ADW_CLAMP(mainClamp_), main_);
     gtk_widget_set_hexpand(mainClamp_, TRUE);
     side_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_size_request(side_, 200, -1);
+    gtk_widget_set_size_request(side_, 300, -1);
     gtk_widget_set_hexpand(side_, FALSE);
     addClass(main_, "card-col");
     addClass(side_, "card-col");
@@ -203,8 +203,13 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_box_append(GTK_BOX(columns_), side_);
     gtk_box_append(GTK_BOX(content_), columns_);
 
-    gtk_box_append(GTK_BOX(side_), section("Etiquetas"));
+    // Members and labels sit right under the title, above the description, side by side.
+    GtkWidget* meta = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    gtk_box_append(GTK_BOX(main_), meta);
+
     GtkWidget* labelsRow = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_hexpand(labelsRow, TRUE);
+    gtk_box_append(GTK_BOX(labelsRow), section("Etiquetas"));
     labelsBox_ = gtk_flow_box_new();
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(labelsBox_), GTK_SELECTION_NONE);
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(labelsBox_), 6);
@@ -224,10 +229,9 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_widget_set_halign(addLabelButton_, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(labelsRow), labelsBox_);
     gtk_box_append(GTK_BOX(labelsRow), addLabelButton_);
-    gtk_box_append(GTK_BOX(side_), labelsRow);
 
-    gtk_box_append(GTK_BOX(side_), section("Membros"));
     GtkWidget* membersRow = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_append(GTK_BOX(membersRow), section("Membros"));
     membersBox_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     addMemberButton_ = pickerButton("Membro", &addMemberList_);
     g_signal_connect_data(
@@ -242,7 +246,8 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_widget_set_halign(addMemberButton_, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(membersRow), membersBox_);
     gtk_box_append(GTK_BOX(membersRow), addMemberButton_);
-    gtk_box_append(GTK_BOX(side_), membersRow);
+    gtk_box_append(GTK_BOX(meta), membersRow);
+    gtk_box_append(GTK_BOX(meta), labelsRow);
 
     gtk_box_append(GTK_BOX(main_), section("Descrição"));
     GtkWidget* descScroll = textArea(&descBuffer_, 96);
@@ -272,10 +277,10 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     attachmentsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_box_append(GTK_BOX(main_), attachmentsBox_);
 
-    gtk_box_append(GTK_BOX(main_), section("Comentários"));
+    gtk_box_append(GTK_BOX(side_), section("Comentários"));
     GtkWidget* commentScroll = textArea(&commentBuffer_, 56);
     commentView_ = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(commentScroll), "view"));
-    gtk_box_append(GTK_BOX(main_), commentScroll);
+    gtk_box_append(GTK_BOX(side_), commentScroll);
     sendButton_ = gtk_button_new_with_label("Comentar");
     addClass(sendButton_, "suggested-action");
     gtk_widget_set_halign(sendButton_, GTK_ALIGN_END);
@@ -296,9 +301,9 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
         }),
         this, nullptr, G_CONNECT_DEFAULT);
     gtk_widget_add_controller(commentView_, keys);
-    gtk_box_append(GTK_BOX(main_), sendButton_);
+    gtk_box_append(GTK_BOX(side_), sendButton_);
     commentsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_box_append(GTK_BOX(main_), commentsBox_);
+    gtk_box_append(GTK_BOX(side_), commentsBox_);
 
     GtkWidget* contentScroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(contentScroll), content_);
@@ -361,11 +366,8 @@ void CardPanel::finishTitleEdit(bool commit) {
 void CardPanel::setNarrow(bool narrow) {
     gtk_orientable_set_orientation(GTK_ORIENTABLE(columns_),
                                    narrow ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
-    // Stacked, labels and members come first, as on Trello's narrow layout.
-    if (narrow)
-        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, nullptr);
-    else
-        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, mainClamp_);
+    // Stacked, the comments go below the card's body and take its full width.
+    gtk_widget_set_size_request(side_, narrow ? -1 : 300, -1);
 }
 
 std::string CardPanel::descriptionText() const { return textOf(descBuffer_); }
