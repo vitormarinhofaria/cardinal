@@ -96,12 +96,13 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     : vm_(std::move(vm)), onClose_(std::move(onClose)) {
     // ---- header: title + close
     GtkWidget* header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_widget_set_margin_top(header, 12);
-    gtk_widget_set_margin_start(header, 16);
-    gtk_widget_set_margin_end(header, 8);
+    gtk_widget_set_margin_top(header, 16);
+    gtk_widget_set_margin_bottom(header, 4);
+    gtk_widget_set_margin_start(header, 20);
+    gtk_widget_set_margin_end(header, 10);
     title_ = gtk_editable_label_new("");
     gtk_widget_set_hexpand(title_, TRUE);
-    addClass(title_, "panel-title");
+    addClass(title_, "card-title");
     onNotify(title_, "notify::editing", [this] {
         if (gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)))
             titleBase_ = shownTitle_;  // what the user was looking at when they began
@@ -124,17 +125,29 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
         updateNotice(vm_->state().get());
     });
 
-    // ---- content
-    content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(content_, 16);
-    gtk_widget_set_margin_end(content_, 16);
-    gtk_widget_set_margin_bottom(content_, 16);
+    // ---- content: list name, then two columns like Trello's card modal: the card's body on the
+    // left, labels and members on a narrow column at the right.
+    content_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(content_, 20);
+    gtk_widget_set_margin_end(content_, 20);
+    gtk_widget_set_margin_bottom(content_, 20);
 
     listName_ = label("", "dim-label");
     gtk_box_append(GTK_BOX(content_), listName_);
 
-    gtk_box_append(GTK_BOX(content_), section("Etiquetas"));
-    GtkWidget* labelsRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    columns_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 24);
+    main_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_hexpand(main_, TRUE);
+    side_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_size_request(side_, 200, -1);
+    addClass(main_, "card-col");
+    addClass(side_, "card-col");
+    gtk_box_append(GTK_BOX(columns_), main_);
+    gtk_box_append(GTK_BOX(columns_), side_);
+    gtk_box_append(GTK_BOX(content_), columns_);
+
+    gtk_box_append(GTK_BOX(side_), section("Etiquetas"));
+    GtkWidget* labelsRow = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     labelsBox_ = gtk_flow_box_new();
     gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(labelsBox_), GTK_SELECTION_NONE);
     gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(labelsBox_), 6);
@@ -151,14 +164,14 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
             if (i < self->labelRowIds_.size()) self->vm_->addLabel(self->labelRowIds_[i]);
         }),
         this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_set_halign(addLabelButton_, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(labelsRow), labelsBox_);
     gtk_box_append(GTK_BOX(labelsRow), addLabelButton_);
-    gtk_box_append(GTK_BOX(content_), labelsRow);
+    gtk_box_append(GTK_BOX(side_), labelsRow);
 
-    gtk_box_append(GTK_BOX(content_), section("Membros"));
-    GtkWidget* membersRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_box_append(GTK_BOX(side_), section("Membros"));
+    GtkWidget* membersRow = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     membersBox_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    gtk_widget_set_hexpand(membersBox_, TRUE);
     addMemberButton_ = pickerButton("Membro", &addMemberList_);
     g_signal_connect_data(
         addMemberList_, "row-activated",
@@ -169,15 +182,16 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
             if (i < self->memberRowIds_.size()) self->vm_->addMember(self->memberRowIds_[i]);
         }),
         this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_set_halign(addMemberButton_, GTK_ALIGN_START);
     gtk_box_append(GTK_BOX(membersRow), membersBox_);
     gtk_box_append(GTK_BOX(membersRow), addMemberButton_);
-    gtk_box_append(GTK_BOX(content_), membersRow);
+    gtk_box_append(GTK_BOX(side_), membersRow);
 
-    gtk_box_append(GTK_BOX(content_), section("Descrição"));
+    gtk_box_append(GTK_BOX(main_), section("Descrição"));
     GtkWidget* descScroll = textArea(&descBuffer_, 96);
     descView_ = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(descScroll), "view"));
     on(descBuffer_, "changed", [this] { descriptionEdited(); });
-    gtk_box_append(GTK_BOX(content_), descScroll);
+    gtk_box_append(GTK_BOX(main_), descScroll);
     descButtons_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(descButtons_, GTK_ALIGN_END);
     GtkWidget* save = gtk_button_new_with_label("Salvar");
@@ -188,23 +202,23 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_box_append(GTK_BOX(descButtons_), revert);
     gtk_box_append(GTK_BOX(descButtons_), save);
     gtk_widget_set_visible(descButtons_, FALSE);
-    gtk_box_append(GTK_BOX(content_), descButtons_);
+    gtk_box_append(GTK_BOX(main_), descButtons_);
 
     extrasSpinner_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget* sp = gtk_spinner_new();
     gtk_spinner_start(GTK_SPINNER(sp));
     gtk_box_append(GTK_BOX(extrasSpinner_), sp);
     gtk_box_append(GTK_BOX(extrasSpinner_), label("Carregando checklists e anexos…", "dim-label"));
-    gtk_box_append(GTK_BOX(content_), extrasSpinner_);
+    gtk_box_append(GTK_BOX(main_), extrasSpinner_);
     checklistsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    gtk_box_append(GTK_BOX(content_), checklistsBox_);
+    gtk_box_append(GTK_BOX(main_), checklistsBox_);
     attachmentsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_box_append(GTK_BOX(content_), attachmentsBox_);
+    gtk_box_append(GTK_BOX(main_), attachmentsBox_);
 
-    gtk_box_append(GTK_BOX(content_), section("Comentários"));
+    gtk_box_append(GTK_BOX(main_), section("Comentários"));
     GtkWidget* commentScroll = textArea(&commentBuffer_, 56);
     commentView_ = static_cast<GtkWidget*>(g_object_get_data(G_OBJECT(commentScroll), "view"));
-    gtk_box_append(GTK_BOX(content_), commentScroll);
+    gtk_box_append(GTK_BOX(main_), commentScroll);
     sendButton_ = gtk_button_new_with_label("Comentar");
     addClass(sendButton_, "suggested-action");
     gtk_widget_set_halign(sendButton_, GTK_ALIGN_END);
@@ -225,9 +239,9 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
         }),
         this, nullptr, G_CONNECT_DEFAULT);
     gtk_widget_add_controller(commentView_, keys);
-    gtk_box_append(GTK_BOX(content_), sendButton_);
+    gtk_box_append(GTK_BOX(main_), sendButton_);
     commentsBox_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_box_append(GTK_BOX(content_), commentsBox_);
+    gtk_box_append(GTK_BOX(main_), commentsBox_);
 
     GtkWidget* contentScroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(contentScroll), content_);
@@ -246,7 +260,9 @@ CardPanel::CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onCl
     gtk_widget_set_vexpand(stack_, TRUE);
 
     root_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    addClass(root_, "panel");
+    // Keep the widgets alive until this object is gone: the dialog holding them may be disposed
+    // first, and the destructor still reads the description to save an unsent draft.
+    g_object_ref_sink(root_);
     gtk_box_append(GTK_BOX(root_), header);
     gtk_box_append(GTK_BOX(root_), banner_);
     gtk_box_append(GTK_BOX(root_), stack_);
@@ -259,6 +275,19 @@ CardPanel::~CardPanel() {
     vm_->state().changed.disconnect(conn_);
     // Closing the panel must not throw away what was typed: an unsent draft is saved.
     if (editingDesc_ && descriptionText() != shownDescription_) vm_->setDescription(descriptionText(), descBase_);
+    g_object_unref(root_);
+}
+
+bool CardPanel::editingTitle() const { return gtk_editable_label_get_editing(GTK_EDITABLE_LABEL(title_)); }
+
+void CardPanel::setNarrow(bool narrow) {
+    gtk_orientable_set_orientation(GTK_ORIENTABLE(columns_),
+                                   narrow ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL);
+    // Stacked, labels and members come first, as on Trello's narrow layout.
+    if (narrow)
+        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, nullptr);
+    else
+        gtk_box_reorder_child_after(GTK_BOX(columns_), side_, main_);
 }
 
 std::string CardPanel::descriptionText() const { return textOf(descBuffer_); }

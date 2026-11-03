@@ -11,8 +11,8 @@ namespace cardinal::gtk {
 class BoardView;
 class CardPanel;
 
-// The signed-in screen: header with board switcher and sync status, the board, and the card panel
-// as a side sheet. Holds every view-model, so destroying it releases them all.
+// The signed-in screen: header with board switcher and sync status, the board, and the open card
+// as a dialog over it (like Trello's card modal). Holds every view-model, so destroying it releases them all.
 class AppPage {
 public:
     AppPage(AppModel& model, std::string dataDir, std::function<void()> onLogout,
@@ -26,6 +26,8 @@ private:
     void openBoard(const std::string& boardId);
     void openCard(const std::string& cardId);
     void closeCard();
+    void onDialogClosed();
+    bool outsideCard(double x, double y) const;  // dialog coordinates
     std::string lastBoard() const;
     void rememberBoard(const std::string& id) const;
 
@@ -53,9 +55,9 @@ private:
     GtkWidget* offlineBanner_;
     GtkWidget* syncIcon_;
     GtkWidget* sendingSpinner_;
-    GtkWidget* split_;
     GtkWidget* content_;  // holds the board, or a loading page
-    GtkWidget* sidebarHolder_;
+    GtkWidget* dialog_ = nullptr;  // the open card, if any
+    bool pressedOutside_ = false;
 };
 
 }  // namespace cardinal::gtk
