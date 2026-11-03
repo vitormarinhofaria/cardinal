@@ -6,7 +6,9 @@
 #include <memory>
 #include <string>
 
+#include "cardinal/board_socket.h"
 #include "cardinal/event_source.h"
+#include "cardinal/webhook_source.h"
 #include "cardinal/executor.h"
 #include "cardinal/http.h"
 #include "cardinal/image_cache.h"
@@ -25,6 +27,14 @@ struct AppConfig {
     std::string token;
     std::string apiBase = "https://api.trello.com/1";
     std::chrono::milliseconds pollInterval{20000};
+    // Live "board changed" triggers; while one works, polling is only a safety net.
+    // Webhooks through a cloudflared quick tunnel (cloudflared is downloaded into dataDir/bin).
+    bool webhook = true;
+    bool webhookDirect = false;  // no tunnel: Trello calls 127.0.0.1 itself (a local mock only)
+    // Trello's websocket; it does not accept API tokens, so it is off unless a URL is given.
+    std::string socketUrl;
+    std::chrono::milliseconds pollIntervalWithSocket{120000};
+    std::function<void(const std::string&)> liveLog;  // diagnostics, optional
     int workerThreads = 4;
     RateLimit rate;
     SyncOptions sync;
@@ -55,6 +65,11 @@ private:
     std::unique_ptr<TrelloApi> api_;
     std::unique_ptr<ThreadPoolExecutor> pool_;
     std::unique_ptr<PollingEventSource> poller_;
+    std::unique_ptr<WebSocketConnector> wsConnector_;
+    std::unique_ptr<BoardSocket> socket_;               // null when disabled
+    std::unique_ptr<WebhookEventSource> webhook_;       // null when disabled
+    std::atomic<int> liveSources_{0};                   // triggers currently working
+    std::unique_ptr<CompositeEventSource> events_;
     std::unique_ptr<AppModel> model_;
     std::atomic<AppModel*> modelRef_{nullptr};  // for the poll thread's callbacks
 };

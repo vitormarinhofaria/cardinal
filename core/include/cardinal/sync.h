@@ -69,6 +69,9 @@ public:
     void openCard(const std::string& id);   // description + comments first, extras after
     void expandList(const std::string& id); // load a cold list now
     void refresh();                         // reload the board list and the open board (connectivity came back)
+    // Something changed on `boardId` (no details): reload it, its shown lists and the open card.
+    // Ignored unless it is the open board; bursts fold into one reload. Thread-safe.
+    void refreshBoard(const std::string& boardId);
 
     std::vector<Board> boards();
     std::vector<List> lists(const std::string& boardId);

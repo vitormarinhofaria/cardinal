@@ -281,6 +281,8 @@ public:
     // Connectivity evidence from outside the sync engine (the live-update poll). Thread-safe.
     void onNetworkOk();
     void onNetworkError(const SyncError& error);
+    // A live trigger (the websocket) says the board changed. Thread-safe.
+    void refreshBoard(const std::string& boardId);
 
     // First step of tearing down: stop reporting to the UI. The destructor does the waiting.
     void quiesce();

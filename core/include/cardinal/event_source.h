@@ -49,6 +49,8 @@ public:
     void unwatch(const std::string& boardId) override;
 
     void pollOnce();
+    // Takes effect at once: the wait in progress restarts with the new interval.
+    void setInterval(std::chrono::milliseconds interval);
     // Stops the polling thread (and with it every callback); the object stays usable for unwatch().
     void stop();
 
@@ -62,9 +64,26 @@ private:
 
     std::mutex mutex_;
     std::condition_variable wake_;
+    std::chrono::milliseconds interval_;
+    bool intervalChanged_ = false;
     std::map<std::string, Handler> watched_;
     bool stop_ = false;
     std::thread thread_;
+};
+
+// Forwards watch/unwatch to several sources (polling plus the websocket trigger).
+class CompositeEventSource : public EventSource {
+public:
+    explicit CompositeEventSource(std::vector<EventSource*> sources) : sources_(std::move(sources)) {}
+    void watch(const std::string& boardId, Handler handler) override {
+        for (auto* s : sources_) s->watch(boardId, handler);
+    }
+    void unwatch(const std::string& boardId) override {
+        for (auto* s : sources_) s->unwatch(boardId);
+    }
+
+private:
+    std::vector<EventSource*> sources_;
 };
 
 }  // namespace cardinal

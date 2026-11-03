@@ -70,6 +70,7 @@ TEST(Integration, BoardCardAndCommentOverRealHttp) {
     cfg.apiKey = "KEY";
     cfg.token = "TOKEN";
     cfg.apiBase = server.url() + "/1";
+    cfg.webhook = false;  // no Trello behind the local server to call us
     cfg.pollInterval = 50ms;
     cfg.sync.alwaysHotLists = 2;
     auto settle = [&](auto cond) {
@@ -133,6 +134,7 @@ TEST(Integration, WrongTokenSurfacesAsLoginRequired) {
     cfg.apiKey = "KEY";
     cfg.token = "WRONG";
     cfg.apiBase = server.url() + "/1";
+    cfg.webhook = false;  // no Trello behind the local server to call us
     {
         AppContext app(cfg, ui);
         app.model().start();

@@ -700,3 +700,52 @@ TEST_F(SyncTest, LoadingAListMarksItLoadedEvenWhenItIsEmpty) {
         }
     }
 }
+
+// ---- websocket trigger: reload the whole board ----
+
+TEST_F(SyncTest, RefreshBoardReloadsBoardShownListsAndOpenCard) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    engine->expandList("l3");
+    engine->openCard("c1");
+    exec.drain();
+    now += 15 * 24 * 3600;  // l3 is cold again, but it is on screen: it must be reloaded too
+    size_t board = callsTo("/boards/b1/lists").size(), l1 = callsTo("/lists/l1/cards").size(),
+           l3 = callsTo("/lists/l3/cards").size(), c1 = coreFetches("c1");
+
+    engine->refreshBoard("b1");
+    exec.drain();
+
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), board + 1);
+    EXPECT_EQ(callsTo("/lists/l1/cards").size(), l1 + 1);
+    EXPECT_EQ(callsTo("/lists/l3/cards").size(), l3 + 1);
+    EXPECT_TRUE(callsTo("/lists/l2/cards").empty());  // never shown: stays unloaded
+    EXPECT_EQ(coreFetches("c1"), c1 + 1);
+    EXPECT_TRUE(sink.errors.empty());
+}
+
+TEST_F(SyncTest, RefreshBoardBurstFoldsIntoOneReload) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    size_t board = callsTo("/boards/b1/lists").size();
+    engine->refreshBoard("b1");
+    engine->refreshBoard("b1");
+    engine->refreshBoard("b1");
+    exec.drain();
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), board + 1);
+    engine->refreshBoard("b1");  // a later one runs again
+    exec.drain();
+    EXPECT_EQ(callsTo("/boards/b1/lists").size(), board + 2);
+}
+
+TEST_F(SyncTest, RefreshBoardForAnotherBoardIsIgnored) {
+    makeEngine();
+    engine->openBoard("b1");
+    exec.drain();
+    size_t calls = req.calls.size();
+    engine->refreshBoard("b2");
+    exec.drain();
+    EXPECT_EQ(req.calls.size(), calls);
+}

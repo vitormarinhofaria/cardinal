@@ -92,7 +92,9 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
 
     // `fresh`: the user just opened the board, so live updates start from now. Otherwise this is a
     // refresh triggered by an event and the cursor must stay where the poller put it.
-    void loadBoard(const std::string& boardId, bool fresh) {
+    // Returns the lists whose cards it queued for loading. `prefetch`: also fetch the cold lists
+    // in the background (when the options allow).
+    std::set<std::string> loadBoard(const std::string& boardId, bool fresh, bool prefetch = true) {
         // Events that happen while the snapshot is being fetched are replayed (harmlessly) because
         // the cursor is the time we started, and it only moves once the snapshot arrived.
         const std::string startedAt = isoUtc(opts.now());
@@ -117,16 +119,89 @@ struct SyncEngine::Impl : std::enable_shared_from_this<Impl> {
         sink.onChanged(c);
 
         std::vector<std::string> cold;
+        std::set<std::string> queued;
         for (size_t i = 0; i < snap.lists.size(); ++i) {
             const auto& l = snap.lists[i];
             if (isHot(l, static_cast<int>(i))) {
                 post([this, id = l.id] { loadListCards(id, Priority::Visible); });
+                queued.insert(l.id);
             } else {
                 cold.push_back(l.id);
             }
         }
-        if (opts.prefetchCold && !cold.empty())
+        if (prefetch && opts.prefetchCold && !cold.empty())
             post([this, boardId, cold] { prefetchCold(boardId, cold, 0); });
+        return queued;
+    }
+
+    // Live trigger without details (the websocket): reload the board, every list already shown
+    // and the open card. Calls arriving while one is queued fold into it; one arriving while it
+    // runs makes it run once more.
+    bool reloadQueued = false, reloadRunning = false, reloadAgain = false;
+
+    void requestReload(const std::string& boardId) {
+        {
+            std::lock_guard lk(mutex);
+            if (closed || currentBoard != boardId) return;
+            if (reloadQueued) return;
+            if (reloadRunning) {
+                reloadAgain = true;
+                return;
+            }
+            reloadQueued = true;
+        }
+        post([this, boardId] { runReload(boardId); });
+    }
+
+    void runReload(const std::string& boardId) {
+        {
+            std::lock_guard lk(mutex);
+            reloadQueued = false;
+            reloadRunning = true;
+            reloadAgain = false;
+        }
+        struct Done {
+            Impl& self;
+            std::string boardId;
+            ~Done() {
+                bool again;
+                {
+                    std::lock_guard lk(self.mutex);
+                    self.reloadRunning = false;
+                    again = self.reloadAgain;
+                    self.reloadAgain = false;
+                }
+                if (again) self.requestReload(boardId);
+            }
+        } done{*this, boardId};
+        if (!isCurrent(boardId)) return;
+        reloadWholeBoard(boardId);
+    }
+
+    void reloadWholeBoard(const std::string& boardId) {
+        std::string open;
+        {
+            std::lock_guard lk(mutex);
+            open = openCardId;
+        }
+        auto queued = loadBoard(boardId, false, false);
+        std::set<std::string> onBoard;
+        bool listGone = false;
+        for (const auto& l : store.lists(boardId)) {
+            onBoard.insert(l.id);
+            if (!l.loaded || queued.count(l.id)) continue;  // never shown, or already on its way
+            try {
+                loadListCards(l.id, Priority::Visible);
+            } catch (const ApiError& e) {
+                if (e.status() != 404) throw;
+                listGone = true;
+            }
+        }
+        if (listGone) loadBoard(boardId, false, false);
+        if (!open.empty()) {
+            auto cached = store.card(open);
+            if (cached && onBoard.count(cached->listId)) openCard(open);
+        }
     }
 
     void loadListCards(const std::string& listId, Priority priority) {
@@ -347,6 +422,8 @@ void SyncEngine::refresh() {
         if (!board.empty()) p->loadBoard(board, true);
     });
 }
+
+void SyncEngine::refreshBoard(const std::string& id) { impl_->requestReload(id); }
 
 void SyncEngine::openCard(const std::string& id) {
     impl_->post([p = impl_.get(), id] { p->openCard(id); });

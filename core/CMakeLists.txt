@@ -1,4 +1,5 @@
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -18,10 +19,16 @@ add_library(cardinal_core STATIC
   src/credentials.cpp
   src/credentials_libsecret.cpp
   src/auth_flow.cpp
+  src/loopback_http.cpp
   src/viewmodel.cpp
   src/app_context.cpp
   src/session.cpp
   src/polling_event_source.cpp
+  src/board_socket.cpp
+  src/ws_curl.cpp
+  src/cloudflared.cpp
+  src/tunnel_cloudflared.cpp
+  src/webhook_source.cpp
   src/time_util.cpp
   src/image_refs.cpp
   src/image_cache.cpp
@@ -29,4 +36,4 @@ add_library(cardinal_core STATIC
 )
 target_include_directories(cardinal_core PUBLIC include)
 target_link_libraries(cardinal_core PUBLIC
-  CURL::libcurl SQLite::SQLite3 nlohmann_json::nlohmann_json PkgConfig::LIBSECRET PkgConfig::MD4C)
+  CURL::libcurl OpenSSL::Crypto SQLite::SQLite3 nlohmann_json::nlohmann_json PkgConfig::LIBSECRET PkgConfig::MD4C)

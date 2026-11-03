@@ -275,4 +275,55 @@ std::future<Comment> TrelloApi::addComment(const std::string& cardId, const std:
                 [](const json& j) { return parseComment(j); });
 }
 
+namespace {
+
+Webhook parseWebhook(const json& j) {
+    Webhook w;
+    if (!j.is_object()) return w;
+    w.id = j.value("id", "");
+    w.description = j.value("description", "");
+    w.callbackURL = j.value("callbackURL", "");
+    w.idModel = j.value("idModel", "");
+    w.active = j.value("active", true);
+    return w;
+}
+
+}  // namespace
+
+std::future<std::vector<Webhook>> TrelloApi::webhooks() {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Get,
+                                  url("/tokens/" + urlEncode(token_) + "/webhooks"), ""),
+                [](const json& j) { return mapArray<Webhook>(j, parseWebhook); });
+}
+
+std::future<Webhook> TrelloApi::createWebhook(const std::string& description,
+                                              const std::string& callbackURL,
+                                              const std::string& idModel) {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Post, url("/webhooks"),
+                                  encodeParams({{"description", description},
+                                                {"callbackURL", callbackURL},
+                                                {"idModel", idModel}})),
+                [](const json& j) { return parseWebhook(j); });
+}
+
+std::future<Webhook> TrelloApi::updateWebhook(const std::string& id, const std::string& callbackURL,
+                                              const std::string& idModel) {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Put,
+                                  url("/webhooks/" + urlEncode(id)),
+                                  encodeParams({{"callbackURL", callbackURL},
+                                                {"idModel", idModel},
+                                                {"active", "true"}})),
+                [](const json& j) { return parseWebhook(j); });
+}
+
+std::future<void> TrelloApi::deleteWebhook(const std::string& id) {
+    Url url{base_, key_, token_};
+    return then(requester_.submit(Priority::Interactive, Method::Delete,
+                                  url("/webhooks/" + urlEncode(id)), ""),
+                [](const json&) {});
+}
+
 }  // namespace cardinal

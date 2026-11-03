@@ -36,6 +36,14 @@ struct CardEdit {
     std::optional<std::string> desc;
 };
 
+struct Webhook {
+    std::string id;
+    std::string description;
+    std::string callbackURL;
+    std::string idModel;
+    bool active = true;
+};
+
 // Percent-encodes every byte outside the RFC 3986 unreserved set.
 std::string urlEncode(std::string_view s);
 
@@ -64,6 +72,15 @@ public:
     std::future<void> addLabel(const std::string& cardId, const std::string& labelId);
     std::future<void> addMember(const std::string& cardId, const std::string& memberId);
     std::future<Comment> addComment(const std::string& cardId, const std::string& text);
+
+    // Webhooks of this token. Trello checks `callbackURL` with a HEAD request when one is created
+    // or changed and answers 400 when that fails.
+    std::future<std::vector<Webhook>> webhooks();
+    std::future<Webhook> createWebhook(const std::string& description, const std::string& callbackURL,
+                                       const std::string& idModel);
+    std::future<Webhook> updateWebhook(const std::string& id, const std::string& callbackURL,
+                                       const std::string& idModel);
+    std::future<void> deleteWebhook(const std::string& id);
 
 private:
     Requester& requester_;

@@ -1,5 +1,9 @@
 #include "cardinal/app_context.h"
 
+#include <algorithm>
+
+#include "cardinal/cloudflared.h"
+
 namespace cardinal {
 
 AppContext::AppContext(AppConfig config, UiDispatcher& ui) {
@@ -29,13 +33,66 @@ AppContext::AppContext(AppConfig config, UiDispatcher& ui) {
     };
     poller_ = std::make_unique<PollingEventSource>(*api_, *store_, polling);
 
-    model_ = std::make_unique<AppModel>(*api_, *store_, *pool_, ui, poller_.get(),
+    std::vector<EventSource*> sources{poller_.get()};
+    auto onActivity = [this](const std::string& boardId) {
+        if (auto* m = modelRef_.load()) m->refreshBoard(boardId);
+    };
+    auto onConnected = [this, slow = std::max(config.pollIntervalWithSocket, config.pollInterval),
+                        normal = config.pollInterval](bool connected) {
+        const int live = connected ? ++liveSources_ : --liveSources_;
+        poller_->setInterval(live > 0 ? slow : normal);
+    };
+    auto logAs = [log = config.liveLog](const char* who) -> std::function<void(const std::string&)> {
+        if (!log) return {};
+        return [log, who](const std::string& line) { log(std::string("[") + who + "] " + line); };
+    };
+    if (config.webhook) {
+        WebhookOptions hook;
+        hook.api = api_.get();
+        hook.dataDir = config.dataDir;
+        hook.onActivity = onActivity;
+        hook.onConnected = onConnected;
+        hook.onLog = logAs("webhook");
+        if (config.webhookDirect) {
+            hook.makeTunnel = [] { return std::make_unique<DirectTunnel>(); };
+        } else {
+            hook.makeTunnel = [this, dir = config.dataDir, log = hook.onLog]() -> std::unique_ptr<Tunnel> {
+                if (log) log("checking cloudflared " + std::string(kCloudflaredVersion));
+                auto bin = ensureCloudflared(*imageHttp_, dir / "bin");  // big download: own client
+                if (log) log("using " + bin.string());
+                return std::make_unique<CloudflaredTunnel>(bin, dir / "cloudflared-home", log);
+            };
+        }
+        try {
+            webhook_ = std::make_unique<WebhookEventSource>(std::move(hook));
+            sources.push_back(webhook_.get());
+        } catch (const std::exception& e) {  // no local port: polling only
+            if (config.liveLog) config.liveLog(std::string("[webhook] ") + e.what());
+        }
+    }
+    if (!config.socketUrl.empty()) {
+        wsConnector_ = makeCurlWebSocketConnector();
+        BoardSocketOptions socket;
+        socket.url = config.socketUrl;
+        socket.token = config.token;
+        socket.connector = wsConnector_.get();
+        socket.onLog = logAs("socket");
+        socket.onActivity = onActivity;
+        socket.onConnected = onConnected;
+        socket_ = std::make_unique<BoardSocket>(std::move(socket));
+        sources.push_back(socket_.get());
+    }
+    events_ = std::make_unique<CompositeEventSource>(std::move(sources));
+
+    model_ = std::make_unique<AppModel>(*api_, *store_, *pool_, ui, events_.get(),
                                         std::move(config.sync), std::move(config.write));
     modelRef_ = model_.get();
 }
 
 AppContext::~AppContext() {
     modelRef_ = nullptr;
+    if (socket_) socket_->stop();    // nor a socket callback
+    if (webhook_) webhook_->stop();  // deletes the webhook: needs the network, so before shutdown
     poller_->stop();      // no poll callback can still be running (or start) from here on
     model_->quiesce();    // from now on nothing is reported to the UI
     scheduler_->shutdown();  // queued requests fail at once...

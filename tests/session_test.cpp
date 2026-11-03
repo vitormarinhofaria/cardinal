@@ -131,6 +131,7 @@ protected:
         cfg.dataDir = dir;
         cfg.apiKey = "KEY";
         cfg.apiBase = server->url() + "/1";
+        cfg.webhook = false;
         cfg.pollInterval = 10s;
     }
     void TearDown() override {

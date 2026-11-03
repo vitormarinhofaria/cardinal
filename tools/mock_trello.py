@@ -6,20 +6,83 @@
 
 It implements only the endpoints Cardinal calls, keeps everything in memory, accepts any key
 and token, and applies writes (card edits, moves, labels, members, comments).
+
+It also speaks a minimal version of Trello's websocket (ws://127.0.0.1:8099/1/Session/socket): it
+answers subscribe/ping and, after every write, notifies the subscribers of the board. Pass
+--socket-url ws://127.0.0.1:8099/1/Session/socket to the app to use it.
+
+Webhooks work too (the app uses them by default; with --api-base it skips the tunnel): created,
+updated and deleted through /1/webhooks, checked with a HEAD like Trello does, and called with a
+POST after every write.
 """
 
 import argparse
+import base64
+import hashlib
 import json
 import random
 import struct
 import threading
 import time
 import urllib.parse
+import urllib.request
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOCK = threading.Lock()
 STATE = {}
+SOCKETS = {}  # Handler -> subscribed board id (or None); guarded by SOCKETS_LOCK
+SOCKETS_LOCK = threading.Lock()
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC11B65"
+
+
+def ws_frame(text):
+    data = text.encode()
+    head = bytes([0x81])
+    if len(data) < 126:
+        head += bytes([len(data)])
+    elif len(data) < 65536:
+        head += bytes([126]) + struct.pack(">H", len(data))
+    else:
+        head += bytes([127]) + struct.pack(">Q", len(data))
+    return head + data
+
+
+HOOKS = {}  # id -> webhook dict; guarded by HOOKS_LOCK
+HOOKS_LOCK = threading.Lock()
+
+
+def reachable(url):
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+def hooks_broadcast():
+    with HOOKS_LOCK:
+        targets = [dict(h) for h in HOOKS.values() if h["active"]]
+
+    def deliver(h):
+        body = json.dumps({"action": {"type": "updateCard"}, "model": {"id": h["idModel"]}}).encode()
+        try:
+            urllib.request.urlopen(urllib.request.Request(h["callbackURL"], data=body, method="POST",
+                                                          headers={"Content-Type": "application/json"}), timeout=3)
+            print("webhook: delivered to %s" % h["id"], flush=True)
+        except Exception as e:
+            print("webhook: delivery to %s failed: %s" % (h["id"], e), flush=True)
+    for h in targets:
+        threading.Thread(target=deliver, args=(h,), daemon=True).start()
+
+
+def ws_broadcast():
+    """Something changed: tell every subscriber of a board (content is not what the app reads)."""
+    with SOCKETS_LOCK:
+        targets = [(h, b) for h, b in SOCKETS.items() if b]
+    for h, board in targets:
+        h.ws_send(json.dumps({"idModelChannel": board,
+                              "notify": {"event": "updateModels", "typeName": "Card", "deltas": []}}))
 
 
 def iso(t=None):
@@ -215,13 +278,136 @@ class Handler(BaseHTTPRequestHandler):
         if STATE.get("delay"):
             time.sleep(STATE["delay"])
         parts = [p for p in u.path.split("/") if p]  # ["1", "cards", "c1", ...]
+        if parts == ["1", "Session", "socket"] and self.headers.get("Upgrade", "").lower() == "websocket":
+            return self.websocket()
         if self.images(method, parts):
+            return
+        if self.webhooks(method, parts, form):
             return
         with LOCK:
             try:
-                return self.dispatch(method, parts, q, form)
+                self.dispatch(method, parts, q, form)
             except KeyError:
                 return self.reply(404, "not found")
+        if method != "GET":
+            ws_broadcast()
+            hooks_broadcast()
+
+    def ws_send(self, text):
+        try:
+            with self.ws_lock:
+                self.wfile.write(ws_frame(text))
+                self.wfile.flush()
+        except OSError:
+            pass
+
+    def ws_read(self):
+        """One frame: (opcode, payload bytes), or None when the peer went away."""
+        head = self.rfile.read(2)
+        if len(head) < 2:
+            return None
+        opcode, n = head[0] & 0x0F, head[1] & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", self.rfile.read(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", self.rfile.read(8))[0]
+        mask = self.rfile.read(4) if head[1] & 0x80 else b"\0\0\0\0"
+        data = bytes(b ^ mask[i % 4] for i, b in enumerate(self.rfile.read(n)))
+        return opcode, data
+
+    def websocket(self):
+        key = self.headers.get("Sec-WebSocket-Key", "")
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        self.ws_lock = threading.Lock()
+        with SOCKETS_LOCK:
+            SOCKETS[self] = None
+        print("socket: connected", flush=True)
+        try:
+            while True:
+                frame = self.ws_read()
+                if frame is None or frame[0] == 0x8:
+                    break
+                opcode, data = frame
+                if opcode == 0x9:  # ping
+                    with self.ws_lock:
+                        self.wfile.write(bytes([0x8A, len(data)]) + data)
+                        self.wfile.flush()
+                    continue
+                if opcode != 0x1:
+                    continue
+                msg = json.loads(data.decode() or "{}")
+                kind = msg.get("type")
+                if kind == "subscribe":
+                    with SOCKETS_LOCK:
+                        SOCKETS[self] = msg.get("idModel")
+                    print("socket: subscribe %s" % msg.get("idModel"), flush=True)
+                elif kind == "unsubscribe":
+                    with SOCKETS_LOCK:
+                        if SOCKETS.get(self) == msg.get("idModel"):
+                            SOCKETS[self] = None
+                self.ws_send(json.dumps({"reqid": msg.get("reqid"), "result": 1}))
+        except (OSError, ValueError):
+            pass
+        finally:
+            with SOCKETS_LOCK:
+                SOCKETS.pop(self, None)
+            print("socket: disconnected", flush=True)
+
+    def webhooks(self, method, parts, form):
+        """/1/webhooks and /1/tokens/{t}/webhooks, outside the lock: the HEAD check calls the app."""
+        if parts[:2] == ["1", "tokens"] and parts[3:] == ["webhooks"] and method == "GET":
+            with HOOKS_LOCK:
+                self.reply(200, list(HOOKS.values()))
+            return True
+        if parts[:2] != ["1", "webhooks"]:
+            return None
+        if len(parts) == 2 and method == "POST":
+            if not reachable(form.get("callbackURL", "")):
+                self.reply(400, "URL (callbackURL) did not return 200 status code")
+                return True
+            with HOOKS_LOCK:
+                STATE["seq"] += 1
+                hid = "wh%d" % STATE["seq"]
+                HOOKS[hid] = {"id": hid, "description": form.get("description", ""),
+                              "callbackURL": form["callbackURL"], "idModel": form.get("idModel", ""),
+                              "active": True}
+                print("webhook: created %s -> %s" % (hid, form["callbackURL"]), flush=True)
+                self.reply(200, HOOKS[hid])
+            return True
+        hid = parts[2] if len(parts) > 2 else ""
+        with HOOKS_LOCK:
+            exists = hid in HOOKS
+        if not exists:
+            self.reply(404, "not found")
+            return True
+        if method == "DELETE":
+            with HOOKS_LOCK:
+                HOOKS.pop(hid, None)
+            print("webhook: deleted %s" % hid, flush=True)
+            self.reply(200, {"_value": None})
+            return True
+        if method == "PUT":
+            if "callbackURL" in form and not reachable(form["callbackURL"]):
+                self.reply(400, "URL (callbackURL) did not return 200 status code")
+                return True
+            with HOOKS_LOCK:
+                h = HOOKS[hid]
+                for k in ("callbackURL", "idModel", "description"):
+                    if k in form:
+                        h[k] = form[k]
+                h["active"] = form.get("active", "true") == "true"
+                print("webhook: updated %s -> %s %s" % (hid, h["callbackURL"], h["idModel"]), flush=True)
+                self.reply(200, h)
+            return True
+        self.reply(200, HOOKS.get(hid))
+        return True
 
     def images(self, method, parts):
         """Picture downloads, served outside the lock: generating a PNG is slow in Python."""

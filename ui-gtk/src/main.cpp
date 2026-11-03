@@ -1,9 +1,11 @@
 #include <adwaita.h>
+#include <glib-unix.h>
 
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 
 #include "cardinal/credentials.h"
 #include "cardinal/session.h"
@@ -27,6 +29,9 @@ struct Options {
     int snapshotDelayMs = 2500;
     bool noKeyring = false;  // keep credentials in memory only (development)
     std::string openCard;  // open this card as soon as the board shows (development)
+    std::optional<std::string> socketUrl;  // "" turns the websocket off
+    bool noWebhook = false;
+    bool webhookDirect = false;  // no tunnel: the (local) API calls 127.0.0.1 directly
 };
 
 class MemoryCredentials : public CredentialStore {
@@ -93,6 +98,12 @@ void activate(GApplication* gapp, gpointer data) {
                  : std::getenv("CARDINAL_API_KEY") ? std::getenv("CARDINAL_API_KEY")
                                                    : CARDINAL_TRELLO_API_KEY;
     if (!o.apiBase.empty()) cfg.apiBase = o.apiBase;
+    if (o.socketUrl) cfg.socketUrl = *o.socketUrl;
+    cfg.webhook = !o.noWebhook;
+    // A development API (the local mock) can call 127.0.0.1 itself: no tunnel needed.
+    cfg.webhookDirect = o.webhookDirect || !o.apiBase.empty();
+    if (g_getenv("CARDINAL_TRACE_LIVE") || g_getenv("CARDINAL_TRACE_SOCKET"))
+        cfg.liveLog = [](const std::string& line) { g_printerr("%s\n", line.c_str()); };
     cfg.pollInterval = std::chrono::seconds(o.pollSeconds);
 
     if (!o.token.empty() || o.noKeyring)
@@ -134,11 +145,17 @@ int main(int argc, char** argv) {
     static gint snapshotDelay = 2500;
     static gchar* openCard = nullptr;
     static gboolean noKeyring = FALSE;
+    static gchar* socketUrl = nullptr;
+    static gboolean noWebhook = FALSE;
+    static gboolean webhookDirect = FALSE;
     GOptionEntry entries[] = {
         {"api-base", 0, 0, G_OPTION_ARG_STRING, &apiBase, "Trello API base URL (development)", "URL"},
         {"api-key", 0, 0, G_OPTION_ARG_STRING, &apiKey, "Trello API key", "KEY"},
         {"token", 0, 0, G_OPTION_ARG_STRING, &token, "Use this token, skip login and keyring (development)", "TOKEN"},
         {"data-dir", 0, 0, G_OPTION_ARG_FILENAME, &dataDir, "Where the cache lives", "DIR"},
+        {"no-webhook", 0, 0, G_OPTION_ARG_NONE, &noWebhook, "Do not receive Trello webhooks (polling only)", nullptr},
+        {"webhook-direct", 0, 0, G_OPTION_ARG_NONE, &webhookDirect, "Webhooks without a tunnel, for a local mock API (development)", nullptr},
+        {"socket-url", 0, 0, G_OPTION_ARG_STRING, &socketUrl, "Trello websocket URL (experimental; Trello refuses API tokens there)", "URL"},
         {"poll-seconds", 0, 0, G_OPTION_ARG_INT, &poll, "Seconds between live-update polls", "N"},
         {"snapshot", 0, 0, G_OPTION_ARG_FILENAME, &snapshot, "Render the window to this PNG and quit (development)", "FILE"},
         {"snapshot-delay", 0, 0, G_OPTION_ARG_INT, &snapshotDelay, "Milliseconds to wait before the snapshot", "MS"},
@@ -158,12 +175,23 @@ int main(int argc, char** argv) {
                          a->options.snapshotDelayMs = snapshotDelay;
                          a->options.openCard = openCard ? openCard : "";
                          a->options.noKeyring = noKeyring;
+                         if (socketUrl) a->options.socketUrl = std::string(socketUrl);
+                         a->options.noWebhook = noWebhook;
+                         a->options.webhookDirect = webhookDirect;
                          a->dataDir = dataDir ? dataDir
                                               : (std::filesystem::path(g_get_user_data_dir()) / "cardinal").string();
                          return -1;
                      }),
                      &app);
     g_signal_connect(gapp, "activate", G_CALLBACK(activate), &app);
+    // Ctrl+C / kill end the app like closing the window does, so the session shuts down cleanly
+    // (the live-update webhook is deleted from Trello on the way out).
+    for (int sig : {SIGINT, SIGTERM, SIGHUP}) {
+        g_unix_signal_add(sig, +[](gpointer a) -> gboolean {
+            g_application_quit(G_APPLICATION(a));
+            return G_SOURCE_CONTINUE;
+        }, gapp);
+    }
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
     app.window.reset();
     app.session.reset();

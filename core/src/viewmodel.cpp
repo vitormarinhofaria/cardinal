@@ -763,6 +763,11 @@ void AppModel::quiesce() { services_->dead = true; }
 
 void AppModel::onNetworkOk() { services_->networkOk(); }
 
+void AppModel::refreshBoard(const std::string& boardId) {
+    if (services_->dead) return;
+    services_->engine->refreshBoard(boardId);
+}
+
 void AppModel::onNetworkError(const SyncError& error) { services_->reportError(error.status, error.what); }
 
 void AppModel::loginCompleted() {

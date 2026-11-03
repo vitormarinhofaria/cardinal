@@ -200,3 +200,21 @@ TEST_F(PollingTest, DoesNotReportSuccessWhenThePollFailed) {
     EXPECT_EQ(ok, 0);
     EXPECT_EQ(errors.size(), 1u);
 }
+
+TEST_F(PollingTest, SetIntervalAppliesToTheWaitInProgress) {
+    store->setSyncCursor("b1", "2026-10-19T12:00:00.000Z");
+    req.routes = {{"/boards/b1/actions", "", {200, "[]"}}};
+    opts.autoStart = true;
+    opts.interval = std::chrono::hours(1);
+    PollingEventSource poller(api, *store, opts);
+    poller.watch("b1", [](std::vector<Action>) {});
+    auto polled = [&] {
+        std::lock_guard lk(req.mu);  // the poll thread records calls concurrently
+        return !req.calls.empty();
+    };
+    poller.setInterval(std::chrono::milliseconds(20));
+    for (int i = 0; i < 200 && !polled(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    poller.stop();
+    EXPECT_FALSE(actionCalls("b1").empty());
+}

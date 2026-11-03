@@ -120,6 +120,7 @@ int main() {
     cfg.apiKey = "K";
     cfg.token = "T";
     cfg.apiBase = server.url() + "/1";
+    cfg.webhook = false;  // no Trello behind the local server to call us
     cfg.pollInterval = 1h;
 
     std::printf("Cardinal core benchmark: %d cards in %d lists, loopback HTTP server\n\n", kCards, kLists);

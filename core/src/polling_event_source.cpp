@@ -7,7 +7,7 @@ namespace cardinal {
 std::string PollingOptions::isoNow() { return isoUtc(std::time(nullptr)); }
 
 PollingEventSource::PollingEventSource(TrelloApi& api, Store& store, PollingOptions options)
-    : api_(api), store_(store), options_(std::move(options)) {
+    : api_(api), store_(store), options_(std::move(options)), interval_(options_.interval) {
     if (options_.autoStart) thread_ = std::thread([this] { run(); });
 }
 
@@ -30,6 +30,16 @@ void PollingEventSource::watch(const std::string& boardId, Handler handler) {
 void PollingEventSource::unwatch(const std::string& boardId) {
     std::lock_guard lk(mutex_);
     watched_.erase(boardId);
+}
+
+void PollingEventSource::setInterval(std::chrono::milliseconds interval) {
+    {
+        std::lock_guard lk(mutex_);
+        if (interval == interval_) return;
+        interval_ = interval;
+        intervalChanged_ = true;
+    }
+    wake_.notify_all();
 }
 
 void PollingEventSource::pollOnce() {
@@ -67,7 +77,11 @@ bool PollingEventSource::pollBoard(const std::string& boardId, const Handler& ha
 void PollingEventSource::run() {
     std::unique_lock lk(mutex_);
     while (!stop_) {
-        if (wake_.wait_for(lk, options_.interval, [this] { return stop_; })) break;
+        intervalChanged_ = false;
+        if (wake_.wait_for(lk, interval_, [this] { return stop_ || intervalChanged_; })) {
+            if (stop_) break;
+            continue;  // new interval: start waiting again from now
+        }
         lk.unlock();
         pollOnce();
         lk.lock();
