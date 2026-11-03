@@ -113,3 +113,47 @@ TEST(ModelJson, AttachmentWithOnlySmallPreviewsTakesTheBiggest) {
     EXPECT_EQ(parseAttachment(j).previewUrl, "https://trello.com/p150");
     EXPECT_TRUE(parseAttachment(nlohmann::json::parse(R"({"id":"a"})")).previewUrl.empty());
 }
+
+TEST(ParseBoard, PictureBackgroundPicksAScaledVersionWideEnoughForAScreen) {
+    Board b = parseBoard(nlohmann::json::parse(R"({"id":"b1","name":"X","prefs":{
+        "backgroundColor":"#8a7a6b","backgroundTopColor":"#9a8a7b","backgroundBottomColor":"#5a4a3b",
+        "backgroundBrightness":"dark","backgroundImage":"https://bg.example/original.jpg",
+        "backgroundImageScaled":[{"width":480,"height":320,"url":"https://bg.example/480.jpg"},
+                                 {"width":2560,"height":1707,"url":"https://bg.example/2560.jpg"},
+                                 {"width":1920,"height":1280,"url":"https://bg.example/1920.jpg"},
+                                 {"width":3200,"height":2133,"url":"https://bg.example/3200.jpg"}]}})"));
+    EXPECT_EQ(b.background.imageUrl, "https://bg.example/1920.jpg");
+    EXPECT_EQ(b.background.color, "#8a7a6b");
+    EXPECT_EQ(b.background.topColor, "#9a8a7b");
+    EXPECT_EQ(b.background.bottomColor, "#5a4a3b");
+    EXPECT_EQ(b.background.brightness, "dark");
+}
+
+TEST(ParseBoard, PictureBackgroundFallsBackToLargestScaledThenOriginal) {
+    Board small = parseBoard(nlohmann::json::parse(R"({"prefs":{"backgroundImage":"https://bg.example/o.jpg",
+        "backgroundImageScaled":[{"width":480,"url":"https://bg.example/480.jpg"},
+                                 {"width":1024,"url":"https://bg.example/1024.jpg"}]}})"));
+    EXPECT_EQ(small.background.imageUrl, "https://bg.example/1024.jpg");
+    Board original = parseBoard(nlohmann::json::parse(
+        R"({"prefs":{"backgroundImage":"https://bg.example/o.jpg","backgroundImageScaled":null}})"));
+    EXPECT_EQ(original.background.imageUrl, "https://bg.example/o.jpg");
+}
+
+TEST(ParseBoard, GradientBackgroundUsesItsColorsNotTheSvg) {
+    Board b = parseBoard(nlohmann::json::parse(R"({"prefs":{"background":"gradient-snow",
+        "backgroundImage":"https://trello.example/gradients/snow.svg",
+        "backgroundTopColor":"#0c66e4","backgroundBottomColor":"#37b4c3","backgroundBrightness":"dark"}})"));
+    EXPECT_TRUE(b.background.imageUrl.empty());
+    EXPECT_EQ(b.background.topColor, "#0c66e4");
+    EXPECT_EQ(b.background.bottomColor, "#37b4c3");
+}
+
+TEST(ParseBoard, NoPrefsMeansNoBackground) {
+    Board b = parseBoard(nlohmann::json::parse(R"({"id":"b1","name":"X","prefs":null})"));
+    EXPECT_EQ(b.background, BoardBackground{});
+}
+
+TEST(ParseList, ReadsColorAndNullIsEmpty) {
+    EXPECT_EQ(parseList(nlohmann::json::parse(R"({"id":"l1","color":"teal"})")).color, "teal");
+    EXPECT_EQ(parseList(nlohmann::json::parse(R"({"id":"l1","color":null})")).color, "");
+}

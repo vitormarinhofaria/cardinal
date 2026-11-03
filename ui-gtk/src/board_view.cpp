@@ -1,6 +1,9 @@
 #include "board_view.h"
 
 #include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <optional>
 
 namespace cardinal::gtk {
 namespace {
@@ -213,8 +216,9 @@ void bindCard(GtkListItemFactory*, GtkListItem* item, gpointer) {
 
 }  // namespace
 
-BoardView::BoardView(std::shared_ptr<BoardVM> vm, std::function<void(const std::string&)> onOpenCard)
-    : vm_(std::move(vm)), onOpenCard_(std::move(onOpenCard)) {
+BoardView::BoardView(std::shared_ptr<BoardVM> vm, ImageCache* images,
+                     std::function<void(const std::string&)> onOpenCard)
+    : vm_(std::move(vm)), onOpenCard_(std::move(onOpenCard)), images_(images) {
     box_ = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_set_margin_top(box_, 12);
     gtk_widget_set_margin_bottom(box_, 12);
@@ -269,13 +273,111 @@ BoardView::BoardView(std::shared_ptr<BoardVM> vm, std::function<void(const std::
         this, nullptr);
     structureConn_ = vm_->structureChanged.connect([this] { rebuildStructure(); });
     columnConn_ = vm_->columnChanged.connect([this](const std::string& id) { updateColumn(id); });
+    headerConn_ = vm_->header().changed.connect([this](const BoardHeader& h) { applyBackground(h.background); });
     rebuildStructure();
+    applyBackground(vm_->header().get().background);
+
+    AdwStyleManager* style = adw_style_manager_get_default();
+    auto followDark = [this, style] {
+        if (adw_style_manager_get_dark(style))
+            addClass(root_, "board-dark");
+        else
+            gtk_widget_remove_css_class(root_, "board-dark");
+    };
+    followDark();
+    darkConn_ = onNotify(style, "notify::dark", followDark);
 }
 
 BoardView::~BoardView() {
     *alive_ = false;
     vm_->structureChanged.disconnect(structureConn_);
     vm_->columnChanged.disconnect(columnConn_);
+    vm_->header().changed.disconnect(headerConn_);
+    if (darkConn_) g_signal_handler_disconnect(adw_style_manager_get_default(), darkConn_);
+    if (bgProvider_) {
+        gtk_style_context_remove_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(bgProvider_));
+        g_object_unref(bgProvider_);
+    }
+}
+
+namespace {
+
+// Only plain "#rgb"/"#rrggbb"/"#rrggbbaa" reach the stylesheet: the values come from Trello.
+bool isHexColor(const std::string& c) {
+    if (c.size() != 4 && c.size() != 7 && c.size() != 9) return false;
+    if (c[0] != '#') return false;
+    return std::all_of(c.begin() + 1, c.end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)); });
+}
+
+const char* kListColors[] = {"green", "yellow", "orange", "red",     "purple",
+                             "blue",  "teal",   "lime",   "magenta", "gray"};
+
+}  // namespace
+
+void BoardView::setBackgroundCss(const std::string& css) {
+    if (!bgProvider_) {
+        static int next = 0;
+        bgClass_ = "board-bg-" + std::to_string(++next);
+        addClass(root_, bgClass_.c_str());
+        bgProvider_ = gtk_css_provider_new();
+        // Above the app stylesheet, so it wins over the default .board-area gradient.
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(bgProvider_),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    }
+    gtk_css_provider_load_from_string(bgProvider_, css.c_str());
+}
+
+// Paints the board like Trello web: the picture when there is one (its average color until it
+// arrives), else the gradient, else the plain color. Nothing known: the default gradient stays.
+void BoardView::applyBackground(const BoardBackground& bg) {
+    if (!(bg == bgShown_)) bgPicture_.clear();  // a different background: drop the old picture
+    bgShown_ = bg;
+    gtk_widget_remove_css_class(root_, "bg-light");
+    if (bg.brightness == "light") addClass(root_, "bg-light");
+
+    std::string fill;
+    if (isHexColor(bg.topColor) && isHexColor(bg.bottomColor))
+        fill = "linear-gradient(" + bg.topColor + ", " + bg.bottomColor + ")";
+    else if (isHexColor(bg.color))
+        fill = bg.color;
+
+    if (bgProvider_ || !fill.empty() || !bgPicture_.empty()) {
+        if (!bgProvider_) setBackgroundCss("");  // creates the provider and the class
+        const std::string sel = ".board-area." + bgClass_;
+        std::string css;
+        if (!bgPicture_.empty()) {
+            char* uri = g_filename_to_uri(bgPicture_.c_str(), nullptr, nullptr);
+            const std::string base = isHexColor(bg.color) ? bg.color : "transparent";
+            css = sel + " { background: " + base + " url(\"" + str(uri) + "\") center / cover no-repeat; }";
+            g_free(uri);
+        } else if (!fill.empty()) {
+            css = sel + " { background: " + fill + "; }";
+        }
+        setBackgroundCss(css);  // empty: back to the default gradient
+    }
+
+    if (bg.imageUrl.empty() || !images_ || !bgPicture_.empty()) return;
+    const std::string url = bg.imageUrl;
+    struct Ctx {
+        BoardView* self;
+        std::shared_ptr<bool> alive;
+        std::string url;
+        std::string file;
+    };
+    images_->fetch(url, [self = this, alive = alive_, url](std::optional<std::filesystem::path> file) {
+        if (!file) return;
+        g_main_context_invoke_full(
+            nullptr, G_PRIORITY_DEFAULT,
+            +[](gpointer d) -> gboolean {
+                auto* c = static_cast<Ctx*>(d);
+                if (*c->alive && c->self->bgShown_.imageUrl == c->url) {
+                    c->self->bgPicture_ = c->file;
+                    c->self->applyBackground(c->self->bgShown_);
+                }
+                return G_SOURCE_REMOVE;
+            },
+            new Ctx{self, alive, url, file->string()}, [](gpointer d) { delete static_cast<Ctx*>(d); });
+    });
 }
 
 BoardView::Column* BoardView::ensureColumn(const std::string& listId) {
@@ -484,6 +586,13 @@ void BoardView::updateColumn(const std::string& listId) {
     if (!col) return;
     Column* c = ensureColumn(listId);
     gtk_label_set_text(GTK_LABEL(c->title), col->name.c_str());
+    for (const char* name : kListColors)
+        gtk_widget_remove_css_class(c->root, ("list-" + std::string(name)).c_str());
+    gtk_widget_remove_css_class(c->root, "list-colored");
+    if (std::find(std::begin(kListColors), std::end(kListColors), col->color) != std::end(kListColors)) {
+        addClass(c->root, ("list-" + col->color).c_str());
+        addClass(c->root, "list-colored");
+    }
     gtk_label_set_text(GTK_LABEL(c->count), std::to_string(col->cardCount).c_str());
     gtk_label_set_text(GTK_LABEL(c->coldCount), std::to_string(col->cardCount).c_str());
     gtk_stack_set_visible_child_name(GTK_STACK(c->stack), col->loaded ? "cards" : "cold");

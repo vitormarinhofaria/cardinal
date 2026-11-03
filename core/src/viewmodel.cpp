@@ -346,8 +346,12 @@ struct BoardVM::Core : Listener, std::enable_shared_from_this<Core> {
 
         const auto rawLists = engine.lists(boardId);
         std::string name;
+        BoardBackground background;
         for (const auto& b : engine.boards())
-            if (b.id == boardId) name = b.name;
+            if (b.id == boardId) {
+                name = b.name;
+                background = b.background;
+            }
 
         std::map<std::string, LabelChip> labelById;
         std::map<std::string, MemberChip> memberById;
@@ -369,7 +373,7 @@ struct BoardVM::Core : Listener, std::enable_shared_from_this<Core> {
             order.push_back(l.id);
             auto prev = last.find(l.id);
             bool need = prev == last.end() || lists.count(l.id) || prev->second->name != l.name ||
-                        prev->second->pos != l.pos;
+                        prev->second->pos != l.pos || prev->second->color != l.color;
             if (!need && !prev->second->loaded && prev->second->cardCount != l.cardCount) need = true;
             if (!need) {
                 now[l.id] = prev->second;
@@ -379,6 +383,7 @@ struct BoardVM::Core : Listener, std::enable_shared_from_this<Core> {
             col->id = l.id;
             col->name = l.name;
             col->pos = l.pos;
+            col->color = l.color;
             auto cached = engine.cards(l.id);
             col->loaded = l.loaded || !cached.empty() || l.cardCount == 0;
             col->cardCount = col->loaded ? static_cast<int>(cached.size()) : l.cardCount;
@@ -412,7 +417,7 @@ struct BoardVM::Core : Listener, std::enable_shared_from_this<Core> {
         }
         out.labels = labels;
         out.members = members;
-        out.header = {name, rawLists.empty() && !seen};
+        out.header = {name, rawLists.empty() && !seen, background};
 
         last = now;
         lastOrder = order;

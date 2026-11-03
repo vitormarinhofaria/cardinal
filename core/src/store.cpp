@@ -10,7 +10,7 @@
 namespace cardinal {
 namespace {
 
-constexpr int kSchemaVersion = 5;
+constexpr int kSchemaVersion = 6;
 
 [[noreturn]] void fail(sqlite3* db, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + sqlite3_errmsg(db));
@@ -140,6 +140,17 @@ void migrate(sqlite3* db) {
         exec(db, R"sql(
             ALTER TABLE cards ADD COLUMN short_link TEXT NOT NULL DEFAULT '';
             CREATE INDEX IF NOT EXISTS cards_short_link ON cards(short_link);
+        )sql");
+    }
+    if (version < 6) {
+        // board background and list colors, so the board looks like Trello web before the network
+        exec(db, R"sql(
+            ALTER TABLE boards ADD COLUMN bg_color TEXT NOT NULL DEFAULT '';
+            ALTER TABLE boards ADD COLUMN bg_top TEXT NOT NULL DEFAULT '';
+            ALTER TABLE boards ADD COLUMN bg_bottom TEXT NOT NULL DEFAULT '';
+            ALTER TABLE boards ADD COLUMN bg_image TEXT NOT NULL DEFAULT '';
+            ALTER TABLE boards ADD COLUMN bg_brightness TEXT NOT NULL DEFAULT '';
+            ALTER TABLE lists ADD COLUMN color TEXT NOT NULL DEFAULT '';
         )sql");
     }
     exec(db, ("PRAGMA user_version = " + std::to_string(kSchemaVersion)).c_str());
@@ -274,11 +285,18 @@ Store::~Store() { sqlite3_close(db_); }
 void Store::upsertBoards(std::span<const Board> boards) {
     std::lock_guard lk(*mu_);
     Tx tx(db_);
-    Stmt s(db_, "INSERT OR REPLACE INTO boards(id, name, closed) VALUES(?,?,?)");
+    Stmt s(db_,
+           "INSERT OR REPLACE INTO boards(id, name, closed, bg_color, bg_top, bg_bottom, bg_image, "
+           "bg_brightness) VALUES(?,?,?,?,?,?,?,?)");
     for (const auto& b : boards) {
         s.text(1, b.id);
         s.text(2, b.name);
         s.integer(3, b.closed);
+        s.text(4, b.background.color);
+        s.text(5, b.background.topColor);
+        s.text(6, b.background.bottomColor);
+        s.text(7, b.background.imageUrl);
+        s.text(8, b.background.brightness);
         s.run();
     }
     tx.commit();
@@ -288,15 +306,16 @@ void Store::upsertLists(std::span<const List> lists) {
     std::lock_guard lk(*mu_);
     Tx tx(db_);
     Stmt s(db_,
-           "INSERT INTO lists(id, board_id, name, pos, card_count) VALUES(?,?,?,?,?) "
+           "INSERT INTO lists(id, board_id, name, pos, card_count, color) VALUES(?,?,?,?,?,?) "
            "ON CONFLICT(id) DO UPDATE SET board_id=excluded.board_id, name=excluded.name, "
-           "pos=excluded.pos, card_count=excluded.card_count");  // keeps cards_loaded
+           "pos=excluded.pos, card_count=excluded.card_count, color=excluded.color");  // keeps cards_loaded
     for (const auto& l : lists) {
         s.text(1, l.id);
         s.text(2, l.boardId);
         s.text(3, l.name);
         s.real(4, l.pos);
         s.integer(5, l.cardCount);
+        s.text(6, l.color);
         s.run();
     }
     tx.commit();
@@ -321,21 +340,26 @@ void Store::upsertCards(std::span<const Card> cards) {
 
 std::vector<Board> Store::boards() {
     std::lock_guard lk(*mu_);
-    Stmt s(db_, "SELECT id, name, closed FROM boards ORDER BY name");
+    Stmt s(db_,
+           "SELECT id, name, closed, bg_color, bg_top, bg_bottom, bg_image, bg_brightness FROM boards "
+           "ORDER BY name");
     std::vector<Board> out;
-    while (s.step()) out.push_back({s.col_text(0), s.col_text(1), s.col_int(2) != 0});
+    while (s.step())
+        out.push_back({s.col_text(0), s.col_text(1), s.col_int(2) != 0,
+                       {s.col_text(3), s.col_text(4), s.col_text(5), s.col_text(6), s.col_text(7)}});
     return out;
 }
 
 std::vector<List> Store::lists(const std::string& boardId) {
     std::lock_guard lk(*mu_);
     Stmt s(db_,
-           "SELECT id, board_id, name, pos, card_count, cards_loaded FROM lists WHERE board_id = ? ORDER BY pos");
+           "SELECT id, board_id, name, pos, card_count, cards_loaded, color FROM lists "
+           "WHERE board_id = ? ORDER BY pos");
     s.text(1, boardId);
     std::vector<List> out;
     while (s.step())
         out.push_back({s.col_text(0), s.col_text(1), s.col_text(2), s.col_real(3), s.col_int(4),
-                       s.col_int(5) != 0});
+                       s.col_int(5) != 0, s.col_text(6)});
     return out;
 }
 

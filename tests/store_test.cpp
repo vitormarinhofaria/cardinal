@@ -451,3 +451,50 @@ TEST_F(StoreTest, CardsAreFoundByShortLinkWhichAWriteResponseDoesNotErase) {
     EXPECT_EQ(s.card("c1")->shortLink, "AbC123xy");
     EXPECT_EQ(s.cardByShortLink("AbC123xy")->name, "Login novo");
 }
+
+TEST_F(StoreTest, BoardBackgroundAndListColorRoundTrip) {
+    {
+        Store s = Store::open(path_);
+        Board b{"b1", "Produto", false, {"#111111", "#222222", "#333333", "https://bg/x.jpg", "light"}};
+        s.upsertBoards(std::vector<Board>{b});
+        List l{"l1", "b1", "A fazer", 1, 0, false, "magenta"};
+        s.upsertLists(std::vector<List>{l});
+    }
+    Store s = Store::open(path_);
+    ASSERT_EQ(s.boards().size(), 1u);
+    EXPECT_EQ(s.boards()[0].background,
+              (BoardBackground{"#111111", "#222222", "#333333", "https://bg/x.jpg", "light"}));
+    ASSERT_EQ(s.lists("b1").size(), 1u);
+    EXPECT_EQ(s.lists("b1")[0].color, "magenta");
+
+    List uncolored{"l1", "b1", "A fazer", 1, 0, false, ""};  // color removed on Trello
+    s.upsertLists(std::vector<List>{uncolored});
+    EXPECT_EQ(s.lists("b1")[0].color, "");
+}
+
+TEST_F(StoreTest, V5DatabaseGainsBackgroundAndListColorKeepingData) {
+    {
+        Store s = Store::open(path_);
+        s.upsertBoards(std::vector<Board>{{"b1", "Produto", false, {}}});
+        s.upsertLists(std::vector<List>{{"l1", "b1", "Antiga", 1, 2, false, ""}});
+    }
+    {
+        // Back to the v5 shape: the new columns did not exist.
+        sqlite3* db = nullptr;
+        ASSERT_EQ(sqlite3_open(path_.string().c_str(), &db), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(db, R"sql(
+            ALTER TABLE boards DROP COLUMN bg_color; ALTER TABLE boards DROP COLUMN bg_top;
+            ALTER TABLE boards DROP COLUMN bg_bottom; ALTER TABLE boards DROP COLUMN bg_image;
+            ALTER TABLE boards DROP COLUMN bg_brightness; ALTER TABLE lists DROP COLUMN color;
+            PRAGMA user_version = 5;
+        )sql", nullptr, nullptr, nullptr), SQLITE_OK);
+        sqlite3_close(db);
+    }
+    Store s = Store::open(path_);
+    ASSERT_EQ(s.boards().size(), 1u);
+    EXPECT_EQ(s.boards()[0].name, "Produto");
+    EXPECT_EQ(s.boards()[0].background, BoardBackground{});
+    ASSERT_EQ(s.lists("b1").size(), 1u);
+    EXPECT_EQ(s.lists("b1")[0].name, "Antiga");
+    EXPECT_EQ(s.lists("b1")[0].color, "");
+}

@@ -6,10 +6,21 @@
 
 namespace cardinal {
 
+// How Trello web paints the board behind the lists (its `prefs.background*`). All empty: unknown.
+struct BoardBackground {
+    std::string color;        // "#rrggbb": plain color, or the average of the picture
+    std::string topColor;     // gradient boards: top and bottom of the gradient
+    std::string bottomColor;
+    std::string imageUrl;     // picture boards: a scaled version wide enough for a screen
+    std::string brightness;   // "dark" or "light": how text over the background should look
+    bool operator==(const BoardBackground&) const = default;
+};
+
 struct Board {
     std::string id;
     std::string name;
     bool closed = false;
+    BoardBackground background;
     bool operator==(const Board&) const = default;
 };
 
@@ -20,6 +31,7 @@ struct List {
     double pos = 0;
     int cardCount = 0;
     bool loaded = false;  // its cards were fetched at least once (an empty list is still loaded)
+    std::string color;    // Trello list color ("green", "teal", ...); empty: none
 };
 
 struct Label {

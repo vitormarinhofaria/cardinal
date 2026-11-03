@@ -65,7 +65,7 @@ TEST(UrlEncode, EncodesUtf8AndReservedBytes) {
     EXPECT_EQ(urlEncode(""), "");
 }
 
-TEST_F(ApiTest, BoardsAsksOnlyNameAndClosedForOpenBoards) {
+TEST_F(ApiTest, BoardsAsksNameClosedAndBackgroundForOpenBoards) {
     req.script = {{200, R"([{"id":"b1","name":"Produto","closed":false}])"}};
     auto boards = api.boards().get();
     ASSERT_EQ(boards.size(), 1u);
@@ -74,7 +74,7 @@ TEST_F(ApiTest, BoardsAsksOnlyNameAndClosedForOpenBoards) {
     EXPECT_EQ(req.calls[0].method, Method::Get);
     EXPECT_EQ(pathOf(req.calls[0].url), "/members/me/boards");
     auto q = queryOf(req.calls[0].url);
-    EXPECT_EQ(q["fields"], "name,closed");
+    EXPECT_EQ(q["fields"], "name,closed,prefs");
     EXPECT_EQ(q["filter"], "open");
     EXPECT_EQ(q["key"], "K");
     EXPECT_EQ(q["token"], "T");

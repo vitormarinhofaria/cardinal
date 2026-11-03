@@ -115,7 +115,7 @@ std::future<std::vector<Board>> TrelloApi::boards() {
     Url url{base_, key_, token_};
     return then(requester_.submit(Priority::Visible, Method::Get,
                                   url("/members/me/boards",
-                                      {{"fields", "name,closed"}, {"filter", "open"}})),
+                                      {{"fields", "name,closed,prefs"}, {"filter", "open"}})),
                 [](const json& j) { return mapArray<Board>(j, parseBoard); });
 }
 
@@ -123,7 +123,7 @@ std::future<BoardSnapshot> TrelloApi::board(const std::string& boardId, Priority
     Url url{base_, key_, token_};
     const std::string path = "/boards/" + urlEncode(boardId);
     auto info = requester_.submit(priority, Method::Get,
-                                  url(path, {{"fields", "name,closed"},
+                                  url(path, {{"fields", "name,closed,prefs"},
                                              {"labels", "all"},
                                              {"label_fields", "name,color"},
                                              {"label_limit", "1000"},
@@ -131,7 +131,7 @@ std::future<BoardSnapshot> TrelloApi::board(const std::string& boardId, Priority
                                              {"member_fields", "fullName,initials"}}));
     auto lists = requester_.submit(priority, Method::Get,
                                    url(path + "/lists", {{"filter", "open"},
-                                                         {"fields", "name,pos"},
+                                                         {"fields", "name,pos,color"},
                                                          {"cards", "open"},
                                                          {"card_fields", "id"}}));
     return std::async(std::launch::deferred, [info = std::move(info), lists = std::move(lists),

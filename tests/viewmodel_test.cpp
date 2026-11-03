@@ -213,6 +213,35 @@ TEST_F(VmTest, BoardShowsColumnsWithResolvedChipsAndColdListsUnloaded) {
     EXPECT_EQ(board->members().size(), 2u);
 }
 
+TEST_F(VmTest, BoardShowsTrelloBackgroundAndListColorsAndFollowsChanges) {
+    routeFirst(Method::Get, "/boards/b1/lists", 200, R"([
+        {"id":"l1","name":"A fazer","pos":1,"color":"green","cards":[]},
+        {"id":"l2","name":"Fazendo","pos":2,"color":null,"cards":[]}])");
+    routeFirst(Method::Get, "/boards/b1", 200, R"({"id":"b1","name":"Produto","closed":false,
+        "prefs":{"backgroundColor":"#0079bf","backgroundBrightness":"dark"},"labels":[],"members":[]})",
+               "prefs");
+    make();
+    auto board = app->openBoard("b1");
+    pump();
+    EXPECT_EQ(board->header().get().background.color, "#0079bf");
+    EXPECT_EQ(board->header().get().background.brightness, "dark");
+    auto cols = board->columns();
+    ASSERT_EQ(cols.size(), 2u);
+    EXPECT_EQ(cols[0]->color, "green");
+    EXPECT_EQ(cols[1]->color, "");
+
+    // Someone recolors a list on Trello web: that column is republished with the new color.
+    std::vector<std::string> changed;
+    board->columnChanged.connect([&](const std::string& id) { changed.push_back(id); });
+    routeFirst(Method::Get, "/boards/b1/lists", 200, R"([
+        {"id":"l1","name":"A fazer","pos":1,"color":"green","cards":[]},
+        {"id":"l2","name":"Fazendo","pos":2,"color":"purple","cards":[]}])");
+    app->refreshBoard("b1");
+    pump();
+    EXPECT_EQ(board->column("l2")->color, "purple");
+    EXPECT_NE(std::find(changed.begin(), changed.end(), "l2"), changed.end());
+}
+
 TEST_F(VmTest, ExpandListLoadsItAndPublishesOnlyThatColumn) {
     make();
     auto board = app->openBoard("b1");

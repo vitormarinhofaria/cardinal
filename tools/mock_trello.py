@@ -116,7 +116,8 @@ def build(cards_total, seed):
             "integração de pagamentos", "tela de perfil", "cache de imagens", "script de deploy"]
     for li, (name, size) in enumerate(zip(names, sizes)):
         lid = "l%d" % li
-        lists[lid] = {"id": lid, "name": name, "pos": (li + 1) * 65536.0, "cards": []}
+        lists[lid] = {"id": lid, "name": name, "pos": (li + 1) * 65536.0, "cards": [],
+                      "color": LIST_COLORS[li] if li < len(LIST_COLORS) else None}
         for ci in range(size):
             n += 1
             cid = "c%d" % n
@@ -150,9 +151,26 @@ def build(cards_total, seed):
             comments[cid] = cs
             lists[lid]["cards"].append(cid)
     STATE.update(
-        boards={"b1": {"id": "b1", "name": "Produto", "closed": False}},
+        boards={"b1": {"id": "b1", "name": "Produto", "closed": False, "prefs": dict(BACKGROUNDS["gradient"])}},
         labels=labels, members=members, lists=lists, cards=cards, comments=comments, seq=n,
     )
+
+
+# Trello list colors for the first lists (the rest have none), like a board recolored on Trello web.
+LIST_COLORS = ["green", None, "yellow", "purple", "teal", "red"]
+
+# Board backgrounds as Trello reports them in `prefs` (choose with --background).
+BACKGROUNDS = {
+    "gradient": {"background": "gradient-ocean", "backgroundImage": "https://trello.example/gradients/ocean.svg",
+                 "backgroundTopColor": "#0c66e4", "backgroundBottomColor": "#37b4c3",
+                 "backgroundBrightness": "dark"},
+    "color": {"background": "green", "backgroundColor": "#4bbf6b", "backgroundBrightness": "dark"},
+    "light": {"background": "grey", "backgroundColor": "#dfe1e6", "backgroundBrightness": "light"},
+    # backgroundImageScaled is filled in with the mock's own URL in main()
+    "picture": {"backgroundColor": "#6b5a4a", "backgroundTopColor": "#7a6a5a",
+                "backgroundBottomColor": "#4a3a2a", "backgroundBrightness": "dark"},
+    "none": {},
+}
 
 
 MARKDOWN_SAMPLE = """
@@ -446,7 +464,7 @@ class Handler(BaseHTTPRequestHandler):
             if rest == ["lists"]:
                 out = []
                 for l in sorted(S["lists"].values(), key=lambda l: l["pos"]):
-                    out.append({"id": l["id"], "name": l["name"], "pos": l["pos"],
+                    out.append({"id": l["id"], "name": l["name"], "pos": l["pos"], "color": l.get("color"),
                                 "cards": [{"id": c} for c in l["cards"] if not S["cards"][c]["closed"]]})
                 return self.reply(200, out)
             if rest == ["actions"]:
@@ -543,8 +561,17 @@ def main():
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--delay", type=float, default=0.0, help="seconds of artificial latency per request")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--background", choices=sorted(BACKGROUNDS), default="gradient",
+                    help="the board background reported in prefs")
     a = ap.parse_args()
     build(a.cards, a.seed)
+    prefs = dict(BACKGROUNDS[a.background])
+    if a.background == "picture":
+        base = "http://127.0.0.1:%d/1/img/" % a.port
+        prefs["backgroundImage"] = base + "background.png"
+        prefs["backgroundImageScaled"] = [{"width": 480, "height": 300, "url": base + "bg-480.png"},
+                                          {"width": 1920, "height": 1200, "url": base + "bg-1920.png"}]
+    STATE["boards"]["b1"]["prefs"] = prefs
     STATE["delay"] = a.delay
     STATE["verbose"] = a.verbose
     print("mock trello on http://127.0.0.1:%d/1 with %d cards" % (a.port, len(STATE["cards"])), flush=True)

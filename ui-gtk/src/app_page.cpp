@@ -11,6 +11,7 @@ namespace cardinal::gtk {
 AppPage::AppPage(AppModel& model, ImageCache* images, std::string dataDir, std::function<void()> onLogout,
                  std::string openCardOnStart)
     : model_(model),
+      imageCache_(images),
       images_(images),
       dataDir_(std::move(dataDir)),
       onLogout_(std::move(onLogout)),
@@ -184,7 +185,7 @@ void AppPage::openBoard(const std::string& boardId) {
     rememberBoard(boardId);
 
     boardVm_ = model_.openBoard(boardId);
-    board_ = std::make_unique<BoardView>(boardVm_, [this](const std::string& id) { openCard(id); });
+    board_ = std::make_unique<BoardView>(boardVm_, imageCache_, [this](const std::string& id) { openCard(id); });
     content_ = board_->widget();
     adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), content_);
 

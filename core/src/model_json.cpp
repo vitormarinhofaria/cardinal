@@ -28,12 +28,47 @@ std::vector<std::string> strings(const json& j, const char* key) {
 
 }  // namespace
 
+static BoardBackground parseBackground(const json& prefs) {
+    BoardBackground bg;
+    if (!prefs.is_object()) return bg;
+    bg.color = str(prefs, "backgroundColor");
+    bg.topColor = str(prefs, "backgroundTopColor");
+    bg.bottomColor = str(prefs, "backgroundBottomColor");
+    bg.brightness = str(prefs, "backgroundBrightness");
+    // The smallest scaled picture at least as wide as a big screen, else the largest one.
+    constexpr double kWanted = 1920;
+    std::string best;
+    double bestWidth = 0;
+    if (auto it = prefs.find("backgroundImageScaled"); it != prefs.end() && it->is_array()) {
+        for (const auto& v : *it) {
+            if (!v.is_object()) continue;
+            const std::string url = str(v, "url");
+            const double w = num(v, "width");
+            if (url.empty()) continue;
+            const bool better = best.empty() || (bestWidth < kWanted ? w > bestWidth : (w >= kWanted && w < bestWidth));
+            if (better) {
+                best = url;
+                bestWidth = w;
+            }
+        }
+    }
+    bg.imageUrl = best.empty() ? str(prefs, "backgroundImage") : best;
+    return bg;
+}
+
 Board parseBoard(const json& j) {
-    return {str(j, "id"), str(j, "name"), j.value("closed", false)};
+    Board b{str(j, "id"), str(j, "name"), j.value("closed", false), {}};
+    if (auto it = j.find("prefs"); it != j.end()) b.background = parseBackground(*it);
+    // A gradient board's picture is a generated SVG; the two colors draw it just as well.
+    if (!b.background.topColor.empty() && !b.background.bottomColor.empty() &&
+        b.background.imageUrl.ends_with(".svg"))
+        b.background.imageUrl.clear();
+    return b;
 }
 
 List parseList(const json& j) {
-    return {str(j, "id"), str(j, "idBoard"), str(j, "name"), num(j, "pos"), 0};
+    List l{str(j, "id"), str(j, "idBoard"), str(j, "name"), num(j, "pos"), 0, false, str(j, "color")};
+    return l;
 }
 
 Label parseLabel(const json& j) { return {str(j, "id"), str(j, "name"), str(j, "color")}; }

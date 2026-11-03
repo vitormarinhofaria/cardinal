@@ -111,6 +111,7 @@ struct ColumnState {
     double pos = 0;
     int cardCount = 0;   // as reported by Trello; equals cards.size() once loaded
     bool loaded = false;  // false: a cold list whose cards were not fetched yet
+    std::string color;    // Trello list color name; empty: none
     std::vector<CardRow> cards;
     bool operator==(const ColumnState&) const = default;
 };
@@ -134,6 +135,7 @@ struct BoardPickerState {
 struct BoardHeader {
     std::string name;
     bool loading = true;
+    BoardBackground background;
     bool operator==(const BoardHeader&) const = default;
 };
 

@@ -18,6 +18,29 @@ inline const char* kStyleCss = R"css(
 }
 .column listview, .column scrolledwindow { background: transparent; }
 .column-title { font-weight: 800; }
+
+/* List colors as Trello web paints them (Atlassian "subtler" accent tokens). The board gets
+   .board-dark from the style manager: libadwaita's dark mode, whatever the system says. */
+.column.list-green   { background: #baf3db; } .column.list-yellow  { background: #f8e6a0; }
+.column.list-orange  { background: #fedec8; } .column.list-red     { background: #ffd5d2; }
+.column.list-purple  { background: #dfd8fd; } .column.list-blue    { background: #cce0ff; }
+.column.list-teal    { background: #c6edfb; } .column.list-lime    { background: #d3f1a7; }
+.column.list-magenta { background: #fdd0ec; } .column.list-gray    { background: #dcdfe4; }
+.column.list-colored { color: #172b4d; }
+.board-dark .column.list-green   { background: #164b35; } .board-dark .column.list-yellow  { background: #533f04; }
+.board-dark .column.list-orange  { background: #702e00; } .board-dark .column.list-red     { background: #5d1f1a; }
+.board-dark .column.list-purple  { background: #352c63; } .board-dark .column.list-blue    { background: #09326c; }
+.board-dark .column.list-teal    { background: #164555; } .board-dark .column.list-lime    { background: #37471f; }
+.board-dark .column.list-magenta { background: #50253f; } .board-dark .column.list-gray    { background: #2c333a; }
+.board-dark .column.list-colored { color: #dee4ea; }
+/* Cards stay solid over a colored list (libadwaita's dark card color is translucent). */
+.column.list-colored .card-row { background: #ffffff; color: #172b4d; }
+.column.list-colored .card-row:hover { background: #f1f2f4; }
+.board-dark .column.list-colored .card-row { background: #22272b; color: #dee4ea; }
+.board-dark .column.list-colored .card-row:hover { background: #2c333a; }
+
+/* Light board backgrounds (Trello's backgroundBrightness = light): dark scrollbars over them. */
+.board-area.bg-light scrollbar slider { background: alpha(black, .45); }
 .column-count { opacity: .6; font-size: smaller; }
 .column-cold { padding: 24px 8px; }
 

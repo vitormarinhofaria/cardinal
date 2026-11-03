@@ -33,6 +33,7 @@ private:
     void rememberBoard(const std::string& id) const;
 
     AppModel& model_;
+    ImageCache* imageCache_;  // may be null
     ImageLoader images_;  // outlives every card panel: decoded pictures stay for the next card
     std::string dataDir_;
     std::function<void()> onLogout_;
