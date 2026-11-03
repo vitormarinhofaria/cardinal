@@ -20,3 +20,20 @@ add_executable(cardinal_gtk
 )
 target_compile_definitions(cardinal_gtk PRIVATE CARDINAL_TRELLO_API_KEY="${CARDINAL_TRELLO_API_KEY}")
 target_link_libraries(cardinal_gtk PRIVATE cardinal_core PkgConfig::GTK4 PkgConfig::ADW PkgConfig::PIXBUF)
+
+# cmake --build build --target run
+add_custom_target(run COMMAND cardinal_gtk USES_TERMINAL DEPENDS cardinal_gtk)
+
+install(TARGETS cardinal_gtk RUNTIME DESTINATION bin)
+install(FILES data/dev.cardinal.Cardinal.desktop DESTINATION share/applications)
+
+# cpack -G DEB (see package-deb.sh)
+set(CPACK_GENERATOR DEB)
+set(CPACK_PACKAGE_NAME cardinal)
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_CONTACT "Vitor Marinho Faria <vitormarinhofaria@gmail.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast native Trello client")
+set(CPACK_DEBIAN_PACKAGE_SECTION utils)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+include(CPack)

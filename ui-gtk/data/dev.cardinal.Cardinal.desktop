@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cardinal
+Comment=A fast native Trello client
+Exec=cardinal_gtk
+Icon=view-list-symbolic
+Terminal=false
+Categories=Office;ProjectManagement;GTK;
+StartupWMClass=dev.cardinal.Cardinal
