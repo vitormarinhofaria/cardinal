@@ -10,13 +10,16 @@
 
 namespace cardinal::gtk {
 
-// The card, as a side sheet: title, description, labels, members, comments, and the extras
+// The card's content, shown in a dialog over the board: title, description, labels, members, comments, and the extras
 // (checklists, attachments) that load a moment later. Pure view over CardPanelVM.
 class CardPanel {
 public:
     CardPanel(std::shared_ptr<CardPanelVM> vm, std::function<void()> onClose);
     ~CardPanel();
     GtkWidget* widget() const { return root_; }
+    // Narrow dialog: stack the two columns, labels and members on top.
+    void setNarrow(bool narrow);
+    bool editingTitle() const;
 
     // GTK callbacks reach in here.
     void commitTitle();
@@ -66,6 +69,9 @@ private:
     GtkWidget* checklistsBox_;
     GtkWidget* attachmentsBox_;
     GtkWidget* content_;
+    GtkWidget* columns_;
+    GtkWidget* main_;   // description, checklists, attachments, comments
+    GtkWidget* side_;   // labels, members
 
     // what is currently shown, to rebuild only what changed
     std::string shownTitle_;

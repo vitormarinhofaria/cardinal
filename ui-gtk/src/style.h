@@ -54,8 +54,8 @@ inline const char* kStyleCss = R"css(
 .lbl-pink_light   { background: #fdd0ec; color: #1d2125; } .lbl-pink_dark   { background: #ae4787; }
 .lbl-black_light  { background: #dcdfe4; color: #1d2125; } .lbl-black_dark  { background: #44546f; }
 
-.panel { background: @window_bg_color; }
-.panel-title { font-size: 1.25em; font-weight: 800; }
+.card-title { font-size: 1.4em; font-weight: 800; }
+.card-col > .section-title:first-child { margin-top: 0; }
 .section-title { font-weight: 800; opacity: .8; margin-top: 6px; }
 .comment-sending { opacity: .55; }
 .comment-bubble { background: @card_bg_color; border-radius: 9px; padding: 8px 10px; }

@@ -80,13 +80,7 @@ AppPage::AppPage(AppModel& model, std::string dataDir, std::function<void()> onL
     adw_status_page_set_title(ADW_STATUS_PAGE(loading), "Carregando boards…");
     content_ = loading;
 
-    split_ = adw_overlay_split_view_new();
-    adw_overlay_split_view_set_sidebar_position(ADW_OVERLAY_SPLIT_VIEW(split_), GTK_PACK_END);
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), FALSE);
-    adw_overlay_split_view_set_min_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 380);
-    adw_overlay_split_view_set_max_sidebar_width(ADW_OVERLAY_SPLIT_VIEW(split_), 440);
-    adw_overlay_split_view_set_content(ADW_OVERLAY_SPLIT_VIEW(split_), content_);
-    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), split_);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), content_);
 
     picker_ = model_.boardPicker();
     pickerConn_ = picker_->state().changed.connect([this](const BoardPickerState& s) { onPickerChanged(s); });
@@ -99,6 +93,11 @@ AppPage::~AppPage() {
     picker_->state().changed.disconnect(pickerConn_);
     model_.status().changed.disconnect(statusConn_);
     if (boardVm_ && headerConn_) boardVm_->header().changed.disconnect(headerConn_);
+    if (dialog_) {
+        g_signal_handlers_disconnect_by_data(dialog_, this);
+        adw_dialog_force_close(ADW_DIALOG(dialog_));
+        dialog_ = nullptr;
+    }
     panel_.reset();
     board_.reset();
 }
@@ -160,7 +159,7 @@ void AppPage::onPickerChanged(const BoardPickerState& state) {
         adw_status_page_set_title(ADW_STATUS_PAGE(empty), "Nenhum board encontrado");
         adw_status_page_set_description(ADW_STATUS_PAGE(empty), "Crie ou entre num board no Trello e ele aparece aqui.");
         content_ = empty;
-        adw_overlay_split_view_set_content(ADW_OVERLAY_SPLIT_VIEW(split_), content_);
+        adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), content_);
     }
 }
 
@@ -185,7 +184,7 @@ void AppPage::openBoard(const std::string& boardId) {
     boardVm_ = model_.openBoard(boardId);
     board_ = std::make_unique<BoardView>(boardVm_, [this](const std::string& id) { openCard(id); });
     content_ = board_->widget();
-    adw_overlay_split_view_set_content(ADW_OVERLAY_SPLIT_VIEW(split_), content_);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_), content_);
 
     auto setTitle = [this](const BoardHeader& h) {
         gtk_menu_button_set_label(GTK_MENU_BUTTON(boardButton_), h.name.empty() ? "Board" : h.name.c_str());
@@ -209,11 +208,67 @@ void AppPage::openBoard(const std::string& boardId) {
 
 void AppPage::openCard(const std::string& cardId) {
     trace("panel: open requested");
-    if (board_) board_->saveScroll();
+    if (dialog_) {  // only one card at a time
+        g_signal_handlers_disconnect_by_data(dialog_, this);
+        adw_dialog_force_close(ADW_DIALOG(dialog_));
+        onDialogClosed();
+    }
     auto vm = model_.openCard(cardId);
     panel_ = std::make_unique<CardPanel>(vm, [this] { closeCard(); });
-    adw_overlay_split_view_set_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), panel_->widget());
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), TRUE);
+
+    dialog_ = GTK_WIDGET(adw_dialog_new());
+    adw_dialog_set_child(ADW_DIALOG(dialog_), panel_->widget());
+    adw_dialog_set_content_width(ADW_DIALOG(dialog_), 768);
+    adw_dialog_set_content_height(ADW_DIALOG(dialog_), 720);
+    gtk_widget_set_size_request(dialog_, 360, 320);  // breakpoints need a minimum size
+    // Narrow window: one column, labels and members first.
+    AdwBreakpoint* bp = adw_breakpoint_new(adw_breakpoint_condition_parse("max-width: 560sp"));
+    g_signal_connect_data(bp, "apply", G_CALLBACK(+[](AdwBreakpoint*, gpointer d) {
+        auto* self = static_cast<AppPage*>(d);
+        if (self->panel_) self->panel_->setNarrow(true);
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    g_signal_connect_data(bp, "unapply", G_CALLBACK(+[](AdwBreakpoint*, gpointer d) {
+        auto* self = static_cast<AppPage*>(d);
+        if (self->panel_) self->panel_->setNarrow(false);
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    adw_dialog_add_breakpoint(ADW_DIALOG(dialog_), bp);
+    g_signal_connect_data(dialog_, "closed", G_CALLBACK(+[](AdwDialog*, gpointer d) {
+        static_cast<AppPage*>(d)->onDialogClosed();
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    // Esc closes the card. Handled before the children see it: the title (which gets the focus)
+    // swallows Esc even when it is not being edited. While editing it, Esc only cancels the edit.
+    GtkEventController* keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect_data(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey*, guint keyval, guint,
+                                                              GdkModifierType, gpointer d) -> gboolean {
+        auto* self = static_cast<AppPage*>(d);
+        if (keyval != GDK_KEY_Escape || !self->panel_ || self->panel_->editingTitle()) return FALSE;
+        self->closeCard();
+        return TRUE;
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(dialog_, keys);
+
+    // A click on the dimmed board around the card closes it, like on Trello. Both press and release
+    // must land outside, so a text selection dragged past the edge does not close it.
+    GtkGesture* outside = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(outside), GDK_BUTTON_PRIMARY);
+    // Capture: the backdrop is a window handle whose own gesture would otherwise see it first.
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(outside), GTK_PHASE_CAPTURE);
+    g_signal_connect_data(outside, "pressed", G_CALLBACK(+[](GtkGestureClick*, int, double x, double y,
+                                                             gpointer d) {
+        auto* self = static_cast<AppPage*>(d);
+        self->pressedOutside_ = self->outsideCard(x, y);
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    g_signal_connect_data(outside, "released", G_CALLBACK(+[](GtkGestureClick*, int, double x, double y,
+                                                              gpointer d) {
+        auto* self = static_cast<AppPage*>(d);
+        if (self->pressedOutside_ && self->outsideCard(x, y)) self->closeCard();
+        self->pressedOutside_ = false;
+    }), this, nullptr, G_CONNECT_DEFAULT);
+    gtk_widget_add_controller(dialog_, GTK_EVENT_CONTROLLER(outside));
+
+    adw_dialog_present(ADW_DIALOG(dialog_), root_);
+
     if (g_getenv("CARDINAL_SELFTEST")) {
         g_timeout_add(700, [](gpointer d) -> gboolean {
             const char* mode = g_getenv("CARDINAL_SELFTEST");
@@ -227,10 +282,20 @@ void AppPage::openCard(const std::string& cardId) {
 }
 
 void AppPage::closeCard() {
-    if (board_) board_->restoreScroll();
-    adw_overlay_split_view_set_show_sidebar(ADW_OVERLAY_SPLIT_VIEW(split_), FALSE);
+    if (dialog_) adw_dialog_close(ADW_DIALOG(dialog_));  // "closed" frees the panel
+}
+
+bool AppPage::outsideCard(double x, double y) const {
+    if (!dialog_ || !panel_) return false;
+    graphene_point_t in = GRAPHENE_POINT_INIT(static_cast<float>(x), static_cast<float>(y)), out;
+    if (!gtk_widget_compute_point(dialog_, panel_->widget(), &in, &out)) return false;
+    return !gtk_widget_contains(panel_->widget(), out.x, out.y);
+}
+
+void AppPage::onDialogClosed() {
+    dialog_ = nullptr;
     if (!panel_) return;
-    // May be called from the panel's own button: free it once the handler has returned.
+    // May be called from inside the panel's own handlers: free it once they have returned.
     auto* doomed = new std::unique_ptr<CardPanel>(std::move(panel_));
     g_idle_add_once(
         [](gpointer data) { delete static_cast<std::unique_ptr<CardPanel>*>(data); }, doomed);
